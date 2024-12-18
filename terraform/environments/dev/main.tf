@@ -1,10 +1,7 @@
-provider "aws" {
-  region = "us-east-1" # North Virginia has the most free tier services
-}
-
+# Environment variables
 locals {
-  environment = "dev"
-  project     = "scraper"
+  environment = var.environment
+  project     = var.project
 }
 
 # Use single AZ in dev to minimize costs
@@ -102,7 +99,7 @@ resource "aws_security_group" "dev_services" {
     from_port   = 22
     to_port     = 22
     protocol    = "tcp"
-    cidr_blocks = ["YOUR_IP_HERE/32"]  # Replace with your IP
+    cidr_blocks = var.ssh_allowed_ips
   }
 
   egress {
