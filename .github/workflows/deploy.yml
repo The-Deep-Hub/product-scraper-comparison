@@ -1,0 +1,152 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+
+jobs:
+  build:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+
+      - name: Build
+        uses: actions-rs/cargo@v1
+        with:
+          command: build
+          args: --release
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: app
+          path: target/release/rust_scraper
+
+  deploy_dev:
+    name: Deploy to Development
+    needs: build
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    environment: development
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.0.0"
+
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/dev
+          terraform init
+
+      - name: Terraform Apply
+        run: |
+          cd terraform/environments/dev
+          terraform apply -auto-approve
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: app
+          path: ./app
+
+      - name: Deploy application
+        run: |
+          chmod +x ./app/rust_scraper
+          # Add deployment steps here
+
+  deploy_prod:
+    name: Deploy to Production
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: 
+      name: production
+      url: https://your-production-url.com
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.0.0"
+
+      - name: Create Terraform Variables
+        run: |
+          cat > terraform/environments/prod/terraform.tfvars <<EOF
+          rabbitmq_user = "${{ secrets.PROD_RABBITMQ_USER }}"
+          rabbitmq_password = "${{ secrets.PROD_RABBITMQ_PASSWORD }}"
+          redis_url = "${{ secrets.PROD_REDIS_URL }}"
+          EOF
+
+      - name: Terraform Init
+        run: |
+          cd terraform/environments/prod
+          terraform init
+
+      - name: Terraform Plan
+        run: |
+          cd terraform/environments/prod
+          terraform plan -out=tfplan
+
+      - name: Manual Approval
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.token }}
+          approvers: ${{ secrets.PROD_APPROVERS }}
+          minimum-approvals: 1
+          issue-title: "Deploying to Production"
+          issue-body: "Please review the Terraform plan and approve the deployment"
+
+      - name: Terraform Apply
+        run: |
+          cd terraform/environments/prod
+          terraform apply tfplan
+
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: app
+          path: ./app
+
+      - name: Deploy application
+        env:
+          RABBITMQ_USER: ${{ secrets.PROD_RABBITMQ_USER }}
+          RABBITMQ_PASSWORD: ${{ secrets.PROD_RABBITMQ_PASSWORD }}
+          REDIS_URL: ${{ secrets.PROD_REDIS_URL }}
+        run: |
+          chmod +x ./app/rust_scraper
+          # Add deployment steps here 

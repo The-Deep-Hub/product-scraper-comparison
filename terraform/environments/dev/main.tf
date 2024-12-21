@@ -42,12 +42,10 @@ resource "aws_instance" "dev_services" {
                 -p 6379:6379 \
                 redis:7
 
-              # Run RabbitMQ container
+              # Run RabbitMQ container (simplified for dev)
               docker run -d --name rabbitmq \
                 -p 5672:5672 \
                 -p 15672:15672 \
-                -e RABBITMQ_DEFAULT_USER=scraper_app \
-                -e RABBITMQ_DEFAULT_PASS=development_only \
                 rabbitmq:3-management
               EOF
 

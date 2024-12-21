@@ -1,0 +1,107 @@
+name: Pull Request Checks
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - '.gitignore'
+
+jobs:
+  lint:
+    name: Lint Code
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          components: clippy, rustfmt
+
+      - name: Check formatting
+        uses: actions-rs/cargo@v1
+        with:
+          command: fmt
+          args: --all -- --check
+
+      - name: Run clippy
+        uses: actions-rs/cargo@v1
+        with:
+          command: clippy
+          args: -- -D warnings
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Rust
+        uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+
+      - name: Run tests
+        uses: actions-rs/cargo@v1
+        with:
+          command: test
+          args: --all-features
+
+  terraform:
+    name: Terraform Plan
+    runs-on: ubuntu-latest
+    if: contains(github.event.pull_request.changed_files, 'terraform/')
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v2
+        with:
+          terraform_version: "1.0.0"
+
+      - name: Terraform Format
+        run: terraform fmt -check -recursive
+
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v1
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: us-east-1
+
+      - name: Terraform Init Dev
+        if: contains(github.event.pull_request.changed_files, 'terraform/environments/dev/')
+        run: |
+          cd terraform/environments/dev
+          terraform init
+
+      - name: Terraform Plan Dev
+        if: contains(github.event.pull_request.changed_files, 'terraform/environments/dev/')
+        run: |
+          cd terraform/environments/dev
+          terraform plan -no-color > plan.txt
+          echo "## Terraform Plan - Development" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat plan.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+
+      - name: Terraform Init Prod
+        if: contains(github.event.pull_request.changed_files, 'terraform/environments/prod/')
+        run: |
+          cd terraform/environments/prod
+          terraform init
+
+      - name: Terraform Plan Prod
+        if: contains(github.event.pull_request.changed_files, 'terraform/environments/prod/')
+        run: |
+          cd terraform/environments/prod
+          terraform plan -no-color > plan.txt
+          echo "## Terraform Plan - Production" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
+          cat plan.txt >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY 
