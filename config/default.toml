@@ -1,0 +1,13 @@
+# Default configuration
+
+# Server settings
+host = "127.0.0.1"
+port = 8080
+
+# CORS settings
+cors_allowed_origins = [
+    "http://localhost:3000"
+]
+
+# Environment
+environment = "development"
