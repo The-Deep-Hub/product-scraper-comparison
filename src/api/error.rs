@@ -1,58 +1,44 @@
-use actix_web::{
-    error::ResponseError,
-    http::{header::ContentType, StatusCode},
-    HttpResponse,
-};
+use actix_web::{HttpResponse, ResponseError};
 use serde::Serialize;
-use thiserror::Error;
+use std::fmt;
 
-#[derive(Debug, Error)]
-pub enum ApiError {
-    #[error("Internal Server Error")]
-    InternalServerError,
-    
-    #[error("Not Found: {0}")]
-    NotFound(String),
-    
-    #[error("Bad Request: {0}")]
-    BadRequest(String),
-    
-    #[error("Unauthorized: {0}")]
-    Unauthorized(String),
-    
-    #[error("Forbidden: {0}")]
-    Forbidden(String),
+#[derive(Debug, Serialize)]
+pub struct ErrorResponse {
+    pub message: String,
 }
 
-#[derive(Serialize)]
-struct ErrorResponse {
-    code: u16,
-    message: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    details: Option<String>,
+#[derive(Debug)]
+pub enum ApiError {
+    BadRequest(String),
+    Unauthorized(String),
+    NotFound(String),
+    InternalServerError(String),
+}
+
+impl fmt::Display for ApiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ApiError::BadRequest(msg) => write!(f, "Bad Request: {}", msg),
+            ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
+            ApiError::NotFound(msg) => write!(f, "Not Found: {}", msg),
+            ApiError::InternalServerError(msg) => write!(f, "Internal Server Error: {}", msg),
+        }
+    }
 }
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
-        let status_code = self.status_code();
         let error_response = ErrorResponse {
-            code: status_code.as_u16(),
             message: self.to_string(),
-            details: None,
         };
 
-        HttpResponse::build(status_code)
-            .insert_header(ContentType::json())
-            .json(error_response)
-    }
-
-    fn status_code(&self) -> StatusCode {
         match self {
-            ApiError::InternalServerError => StatusCode::INTERNAL_SERVER_ERROR,
-            ApiError::NotFound(_) => StatusCode::NOT_FOUND,
-            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            ApiError::Forbidden(_) => StatusCode::FORBIDDEN,
+            ApiError::BadRequest(_) => HttpResponse::BadRequest().json(error_response),
+            ApiError::Unauthorized(_) => HttpResponse::Unauthorized().json(error_response),
+            ApiError::NotFound(_) => HttpResponse::NotFound().json(error_response),
+            ApiError::InternalServerError(_) => {
+                HttpResponse::InternalServerError().json(error_response)
+            }
         }
     }
 } 

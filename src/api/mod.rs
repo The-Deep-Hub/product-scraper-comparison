@@ -5,36 +5,33 @@ pub mod models;
 pub mod response;
 pub mod routes;
 
-use actix_web::{middleware::Logger, App, HttpServer};
-use tracing::info;
+pub use config::ApiConfig;
+pub use error::ApiError;
+pub use response::ApiResponse;
 
-use crate::api::{
-    config::ApiConfig,
-    middleware::cors_middleware,
-    routes::health_config,
-};
+use actix_web::{web, App, HttpServer};
+use actix_cors::Cors;
+use middleware::auth::AuthMiddleware;
+use middleware::logging::setup_logging;
+use routes::auth::auth_routes;
+use std::net::TcpListener;
 
-pub struct ApiServer {
-    config: ApiConfig,
-}
+pub async fn start_server(listener: TcpListener, auth_middleware: AuthMiddleware) -> std::io::Result<()> {
+    setup_logging();
 
-impl ApiServer {
-    pub fn new(config: ApiConfig) -> Self {
-        Self { config }
-    }
+    HttpServer::new(move || {
+        let cors = Cors::default()
+            .allow_any_origin()
+            .allow_any_method()
+            .allow_any_header()
+            .max_age(3600);
 
-    pub async fn run(&self) -> std::io::Result<()> {
-        let addr = format!("{}:{}", self.config.host, self.config.port);
-        info!("Starting API server at http://{}", addr);
-
-        HttpServer::new(move || {
-            App::new()
-                .wrap(Logger::default())
-                .wrap(cors_middleware())
-                .configure(health_config)
-        })
-        .bind(&addr)?
-        .run()
-        .await
-    }
+        App::new()
+            .wrap(cors)
+            .app_data(web::Data::new(auth_middleware.clone()))
+            .service(auth_routes())
+    })
+    .listen(listener)?
+    .run()
+    .await
 }

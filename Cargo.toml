@@ -8,6 +8,7 @@ edition = "2021"
 actix-web = "4.4"
 actix-cors = "0.6"
 actix-service = "2.0"
+actix-web-httpauth = "0.8"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
@@ -32,9 +33,15 @@ dotenv = "0.15"
 
 # Time
 chrono = { version = "0.4", features = ["serde"] }
+time = "0.3"
 
 # Utils
 uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Authentication
+jsonwebtoken = "9.2"
+bcrypt = "0.15"
+lazy_static = "1.4"
 
 [dev-dependencies]
 actix-rt = "2.9"
