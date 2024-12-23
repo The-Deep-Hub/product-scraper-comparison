@@ -1,17 +1,17 @@
-use rust_scraper::api::{
-    config::ApiConfig,
-    middleware::auth::{AuthMiddleware, AuthConfig},
-};
-use std::net::TcpListener;
+use rust_scraper::api::start_server;
+use redis::aio::ConnectionManager;
+use actix_web::web::Data;
 
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
-    let config = ApiConfig::default();
-    let auth_config = AuthConfig::default();
-    let auth_middleware = AuthMiddleware::new(auth_config);
+    dotenv::dotenv().ok();
+    env_logger::init();
 
-    let listener = TcpListener::bind((config.host.as_str(), config.port))?;
-    println!("Server running at http://{}:{}", config.host, config.port);
+    let redis_password = std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set");
+    let redis_url = format!("redis://:{}@localhost:6379", redis_password);
+    let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
+    let redis_manager = ConnectionManager::new(redis_client).await.expect("Failed to create Redis connection manager");
+    let redis_data = Data::new(redis_manager);
 
-    rust_scraper::api::start_server(listener, auth_middleware).await
+    start_server(redis_data).await
 }

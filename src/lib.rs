@@ -4,3 +4,4 @@ pub mod scrapers;
 pub mod workers;
 pub mod clients;
 pub mod utils;
+pub mod db;
