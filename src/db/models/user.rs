@@ -1,35 +1,29 @@
-use bson::oid::ObjectId;
-use chrono::{DateTime, Utc};
+use mongodb::bson::oid::ObjectId;
 use serde::{Deserialize, Serialize};
-
-use crate::{
-    api::middleware::auth::Role,
-    db::models::{Model, WithId},
-};
+use bcrypt::{hash, DEFAULT_COST};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct User {
     #[serde(rename = "_id", skip_serializing_if = "Option::is_none")]
     pub id: Option<ObjectId>,
     pub email: String,
-    pub password_hash: String,
-    pub role: Role,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    pub password: String,
+    pub role: String,
+    #[serde(with = "bson::serde_helpers::chrono_datetime_as_bson_datetime")]
+    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
-impl Model for User {
-    fn collection_name() -> &'static str {
-        "users"
-    }
-}
-
-impl WithId for User {
-    fn id(&self) -> Option<&ObjectId> {
-        self.id.as_ref()
-    }
-
-    fn set_id(&mut self, id: ObjectId) {
-        self.id = Some(id);
+impl User {
+    pub fn new(email: String, password: String) -> Self {
+        let hashed_password = hash(password.as_bytes(), DEFAULT_COST)
+            .expect("Failed to hash password");
+        
+        Self {
+            id: None,
+            email,
+            password: hashed_password,
+            role: "user".to_string(),
+            created_at: chrono::Utc::now(),
+        }
     }
 } 

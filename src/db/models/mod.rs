@@ -1,4 +1,5 @@
 pub mod user;
+pub mod scraping;
 
 use async_trait::async_trait;
 

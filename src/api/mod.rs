@@ -4,43 +4,48 @@ pub mod routes;
 pub mod utils;
 
 use actix_web::{web, App, HttpServer};
-use actix_cors::Cors;
-use middleware::AuthMiddleware;
-use mongodb::Client;
+use mongodb::Database;
 use redis::aio::ConnectionManager;
 
-pub async fn start_server(_redis_manager: web::Data<ConnectionManager>) -> std::io::Result<()> {
-    // Connect to MongoDB
-    let mongo_uri = std::env::var("MONGO_URI")
-        .unwrap_or_else(|_| "mongodb://admin:password123@localhost:27017".to_string());
-    let mongo_client = Client::with_uri_str(&mongo_uri)
-        .await
-        .expect("Failed to create MongoDB client");
-    let db = mongo_client.database("rust_scraper");
-    let user_repo = web::Data::new(crate::db::repositories::user::UserRepository::new(db));
+use crate::{
+    db::repositories::{
+        user::UserRepository,
+        scraping::ScrapingRepository,
+    },
+    services::{
+        cache::{CacheService, RedisCacheService},
+        queue::{QueueService, RabbitMQService},
+    },
+};
 
-    let server = HttpServer::new(move || {
-        let cors = Cors::default()
-            .allow_any_origin()
-            .allow_any_method()
-            .allow_any_header()
-            .max_age(3600);
+pub async fn start_server(
+    db: Database,
+    redis: ConnectionManager,
+    rabbitmq_uri: &str,
+) -> std::io::Result<()> {
+    let user_repository = UserRepository::new(db.clone());
+    let scraping_repository = ScrapingRepository::new(db.clone());
+    let cache_service = web::Data::new(Box::new(RedisCacheService::new(redis)) as Box<dyn CacheService>);
+    let queue_service = web::Data::new(Box::new(RabbitMQService::new(rabbitmq_uri).await.unwrap()) as Box<dyn QueueService>);
 
+    HttpServer::new(move || {
         App::new()
-            .wrap(cors)
-            .app_data(user_repo.clone())
+            .app_data(web::Data::new(db.clone()))
+            .app_data(web::Data::new(user_repository.clone()))
+            .app_data(web::Data::new(scraping_repository.clone()))
+            .app_data(cache_service.clone())
+            .app_data(queue_service.clone())
             .service(
                 web::scope("/api")
-                    .configure(routes::auth_config)
-                    .service(
-                        web::scope("/protected")
-                            .wrap(AuthMiddleware)
-                            .configure(routes::health_config)
-                    )
+                    .wrap(middleware::auth::AuthMiddleware)
+                    .configure(routes::auth::config)
+                    .configure(routes::health::config)
+                    .configure(routes::scraper::config)
+                    .configure(routes::job::config)
+                    .configure(routes::results::config)
             )
     })
-    .bind("127.0.0.1:8080")?;
-
-    println!("Server running at http://127.0.0.1:8080");
-    server.run().await
+    .bind("127.0.0.1:8080")?
+    .run()
+    .await
 }
