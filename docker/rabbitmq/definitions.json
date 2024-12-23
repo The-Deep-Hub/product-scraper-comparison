@@ -1,0 +1,113 @@
+{
+    "rabbit_version": "3.12.0",
+    "users": [
+        {
+            "name": "admin",
+            "password_hash": "",
+            "hashing_algorithm": "rabbit_password_hashing_sha256",
+            "tags": ["administrator"]
+        }
+    ],
+    "vhosts": [
+        {
+            "name": "/"
+        }
+    ],
+    "permissions": [
+        {
+            "user": "admin",
+            "vhost": "/",
+            "configure": ".*",
+            "write": ".*",
+            "read": ".*"
+        }
+    ],
+    "parameters": [],
+    "policies": [
+        {
+            "vhost": "/",
+            "name": "ha-all",
+            "pattern": ".*",
+            "definition": {
+                "ha-mode": "all",
+                "ha-sync-mode": "automatic"
+            },
+            "priority": 0
+        }
+    ],
+    "queues": [
+        {
+            "name": "scraper_tasks",
+            "vhost": "/",
+            "durable": true,
+            "auto_delete": false,
+            "arguments": {
+                "x-message-ttl": 3600000,
+                "x-dead-letter-exchange": "dlx",
+                "x-dead-letter-routing-key": "dead_letter"
+            }
+        },
+        {
+            "name": "scraper_results",
+            "vhost": "/",
+            "durable": true,
+            "auto_delete": false,
+            "arguments": {
+                "x-message-ttl": 86400000
+            }
+        },
+        {
+            "name": "dead_letter_queue",
+            "vhost": "/",
+            "durable": true,
+            "auto_delete": false,
+            "arguments": {}
+        }
+    ],
+    "exchanges": [
+        {
+            "name": "scraper_exchange",
+            "vhost": "/",
+            "type": "topic",
+            "durable": true,
+            "auto_delete": false,
+            "internal": false,
+            "arguments": {}
+        },
+        {
+            "name": "dlx",
+            "vhost": "/",
+            "type": "direct",
+            "durable": true,
+            "auto_delete": false,
+            "internal": false,
+            "arguments": {}
+        }
+    ],
+    "bindings": [
+        {
+            "source": "scraper_exchange",
+            "vhost": "/",
+            "destination": "scraper_tasks",
+            "destination_type": "queue",
+            "routing_key": "task.#",
+            "arguments": {}
+        },
+        {
+            "source": "scraper_exchange",
+            "vhost": "/",
+            "destination": "scraper_results",
+            "destination_type": "queue",
+            "routing_key": "result.#",
+            "arguments": {}
+        },
+        {
+            "source": "dlx",
+            "vhost": "/",
+            "destination": "dead_letter_queue",
+            "destination_type": "queue",
+            "routing_key": "dead_letter",
+            "arguments": {}
+        }
+    ]
+} 

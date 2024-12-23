@@ -29,3 +29,17 @@ admin_name = "Development Admin"
 allowed_origins = ["http://localhost:3000"]
 allowed_methods = ["GET", "POST", "PUT", "DELETE"]
 allowed_headers = ["Authorization", "Content-Type"]
+
+[api]
+host = "127.0.0.1"
+port = 8080
+
+[auth]
+jwt_secret = "your-secret-key-for-development"
+token_expiration = 86400  # 24 hours in seconds
+
+[mongodb]
+uri = "mongodb://rust_scraper:rust_scraper_password@localhost:27017/rust_scraper"
+database = "rust_scraper"
+min_pool_size = 5
+max_pool_size = 10

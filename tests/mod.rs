@@ -13,4 +13,5 @@ pub mod api {
     pub mod routes {
         pub mod auth;
     }
-} 
+} #[cfg(test)]
+mod infrastructure; 
