@@ -1,24 +1,14 @@
-use actix_web::{get, web, HttpResponse};
-use serde::Serialize;
-
-use crate::api::response::ApiResponse;
-
-#[derive(Debug, Serialize)]
-pub struct HealthStatus {
-    status: String,
-    version: String,
-}
-
-pub fn health_config(cfg: &mut web::ServiceConfig) {
-    cfg.service(health_check);
-}
+use actix_web::{get, web::ServiceConfig, HttpResponse, Responder};
+use chrono::Utc;
 
 #[get("/health")]
-async fn health_check() -> HttpResponse {
-    let health_status = HealthStatus {
-        status: "ok".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    };
+pub async fn health_check() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "timestamp": Utc::now().to_rfc3339()
+    }))
+}
 
-    HttpResponse::Ok().json(ApiResponse::success(health_status))
+pub fn config(cfg: &mut ServiceConfig) {
+    cfg.service(health_check);
 } 

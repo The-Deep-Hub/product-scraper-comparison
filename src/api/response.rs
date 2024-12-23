@@ -6,9 +6,10 @@ where
     T: Serialize,
 {
     pub success: bool,
-    pub data: T,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+    pub data: Option<T>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 impl<T> ApiResponse<T>
@@ -18,16 +19,16 @@ where
     pub fn success(data: T) -> Self {
         Self {
             success: true,
-            data,
-            message: None,
+            data: Some(data),
+            error: None,
         }
     }
 
-    pub fn success_with_message(data: T, message: impl Into<String>) -> Self {
+    pub fn error<S: Into<String>>(message: S) -> ApiResponse<T> {
         Self {
-            success: true,
-            data,
-            message: Some(message.into()),
+            success: false,
+            data: None,
+            error: Some(message.into()),
         }
     }
 }

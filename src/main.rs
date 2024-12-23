@@ -1,14 +1,17 @@
-use rust_scraper::api::{config::ApiConfig, middleware::logging::setup_logging, ApiServer};
+use rust_scraper::api::start_server;
+use redis::aio::ConnectionManager;
+use actix_web::web::Data;
 
-#[actix_web::main]
+#[tokio::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize logging
-    setup_logging();
+    dotenv::dotenv().ok();
+    env_logger::init();
 
-    // Load configuration
-    let config = ApiConfig::new();
+    let redis_password = std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set");
+    let redis_url = format!("redis://:{}@localhost:6379", redis_password);
+    let redis_client = redis::Client::open(redis_url).expect("Failed to create Redis client");
+    let redis_manager = ConnectionManager::new(redis_client).await.expect("Failed to create Redis connection manager");
+    let redis_data = Data::new(redis_manager);
 
-    // Create and run API server
-    let server = ApiServer::new(config);
-    server.run().await
+    start_server(redis_data).await
 }
