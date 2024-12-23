@@ -99,14 +99,21 @@ async fn test_expiration() {
         .query(&mut conn);
     assert!(expire_result.is_ok());
     
-    // Verify key exists
+    // Verify key exists and has TTL
     let exists: bool = conn.exists("test:expiry:key").expect("Failed to check key existence");
-    assert!(exists);
+    assert!(exists, "Key should exist immediately after setting");
     
-    // Wait for expiration
-    std::thread::sleep(std::time::Duration::from_secs(2));
+    let ttl: i64 = conn.ttl("test:expiry:key").expect("Failed to get TTL");
+    assert!(ttl > 0, "Key should have a positive TTL");
+    
+    // Wait for expiration (wait a bit longer to account for timing issues)
+    std::thread::sleep(std::time::Duration::from_secs(3));
     
     // Verify key has expired
     let exists: bool = conn.exists("test:expiry:key").expect("Failed to check key existence");
-    assert!(!exists);
+    assert!(!exists, "Key should have expired");
+    
+    // Clean up
+    cleanup_test_data(&mut conn, "test:expiry:*")
+        .expect("Failed to clean up test data");
 } 

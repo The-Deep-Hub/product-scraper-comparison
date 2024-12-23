@@ -1,68 +1,94 @@
 use actix_web::{
-    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
-    Error,
+    body::{EitherBody, MessageBody, BoxBody},
+    dev::{Service, ServiceRequest, ServiceResponse, Transform},
+    Error, FromRequest, HttpResponse,
 };
-use futures_util::future::{ok, Ready};
-use std::future::Future;
-use std::pin::Pin;
+use serde::de::DeserializeOwned;
+use std::{
+    future::{ready, Ready, Future},
+    pin::Pin,
+    rc::Rc,
+    task::{Context, Poll},
+};
 use validator::Validate;
+use serde::Deserialize;
 
-pub struct ValidationMiddleware<T>(std::marker::PhantomData<T>);
+pub struct ValidateRequest<T>(std::marker::PhantomData<T>);
 
-impl<T> ValidationMiddleware<T> {
+impl<T> ValidateRequest<T> {
     pub fn new() -> Self {
-        ValidationMiddleware(std::marker::PhantomData)
+        ValidateRequest(std::marker::PhantomData)
     }
 }
 
-impl<S, B, T> Transform<S, ServiceRequest> for ValidationMiddleware<T>
+impl<S, B, T> Transform<S, ServiceRequest> for ValidateRequest<T>
 where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
     S::Future: 'static,
-    B: 'static,
-    T: Validate + 'static,
+    B: MessageBody + 'static,
+    T: DeserializeOwned + Validate + FromRequest + 'static,
+    T::Error: Into<Error>,
 {
-    type Response = ServiceResponse<B>;
+    type Response = ServiceResponse<EitherBody<BoxBody, B>>;
     type Error = Error;
     type InitError = ();
-    type Transform = ValidationMiddlewareService<S, T>;
+    type Transform = ValidateRequestMiddleware<S, T>;
     type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
     fn new_transform(&self, service: S) -> Self::Future {
-        ok(ValidationMiddlewareService {
-            service,
+        ready(Ok(ValidateRequestMiddleware {
+            service: Rc::new(service),
             _phantom: std::marker::PhantomData,
+        }))
+    }
+}
+
+pub struct ValidateRequestMiddleware<S, T> {
+    service: Rc<S>,
+    _phantom: std::marker::PhantomData<T>,
+}
+
+impl<S, B, T> Service<ServiceRequest> for ValidateRequestMiddleware<S, T>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error> + 'static,
+    B: MessageBody + 'static,
+    T: DeserializeOwned + Validate + FromRequest + 'static,
+    T::Error: Into<Error>,
+{
+    type Response = ServiceResponse<EitherBody<BoxBody, B>>;
+    type Error = Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
+
+    fn poll_ready(&self, ctx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.service.poll_ready(ctx)
+    }
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        let svc = self.service.clone();
+
+        Box::pin(async move {
+            let http_req = req.parts().0.clone();
+            if let Ok(payload) = T::extract(&http_req).await {
+                if let Err(errors) = payload.validate() {
+                    let res = HttpResponse::BadRequest().json(errors);
+                    return Ok(ServiceResponse::new(http_req, res).map_into_left_body());
+                }
+            }
+            let res = svc.call(req).await?;
+            Ok(res.map_into_right_body())
         })
     }
 }
 
-pub struct ValidationMiddlewareService<S, T> {
-    service: S,
-    _phantom: std::marker::PhantomData<T>,
+#[derive(Debug, Deserialize, Validate)]
+pub struct PasswordReset {
+    #[validate(email)]
+    pub email: String,
 }
 
-impl<S, B, T> Service<ServiceRequest> for ValidationMiddlewareService<S, T>
-where
-    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
-    S::Future: 'static,
-    B: 'static,
-    T: Validate + 'static,
-{
-    type Response = ServiceResponse<B>;
-    type Error = Error;
-    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>>>>;
-
-    forward_ready!(service);
-
-    fn call(&self, req: ServiceRequest) -> Self::Future {
-        Box::pin(self.service.call(req))
-    }
-}
-
-pub async fn validate_request<T>(_req: &ServiceRequest, data: &T) -> Result<(), Error>
-where
-    T: Validate,
-{
-    data.validate()
-        .map_err(|e| Error::from(actix_web::error::ErrorBadRequest(e.to_string())))
+#[derive(Debug, Deserialize, Validate)]
+pub struct PasswordUpdate {
+    #[validate(length(min = 8, max = 100))]
+    pub password: String,
+    pub reset_token: String,
 } 
