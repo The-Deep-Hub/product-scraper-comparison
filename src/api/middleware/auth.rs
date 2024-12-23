@@ -1,112 +1,142 @@
+use std::future::{ready, Ready};
 use actix_web::{
-    dev::ServiceRequest,
-    Error,
-    error::ErrorUnauthorized,
+    body::EitherBody,
+    dev::{forward_ready, Service, ServiceRequest, ServiceResponse, Transform},
+    Error, HttpResponse,
 };
-use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
+use futures_util::future::LocalBoxFuture;
 use serde::{Deserialize, Serialize};
-use std::future::Future;
-use std::pin::Pin;
-use chrono::{Utc, Duration};
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy, PartialEq)]
-pub enum Role {
-    Admin,
-    Basic,
-}
+use crate::api::utils::validate_token;
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Claims {
-    pub sub: String,
-    pub role: Role,
-    pub exp: i64,
-    pub iat: i64,
-}
+pub struct AuthMiddleware;
 
-#[derive(Clone)]
-pub struct AuthConfig {
-    pub jwt_secret: String,
-    pub token_expiration: i64, // in seconds
-}
+impl<S, B> Transform<S, ServiceRequest> for AuthMiddleware
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type InitError = ();
+    type Transform = AuthMiddlewareService<S>;
+    type Future = Ready<Result<Self::Transform, Self::InitError>>;
 
-impl Default for AuthConfig {
-    fn default() -> Self {
-        Self {
-            jwt_secret: "your-secret-key".to_string(),
-            token_expiration: 24 * 60 * 60, // 24 hours
-        }
+    fn new_transform(&self, service: S) -> Self::Future {
+        ready(Ok(AuthMiddlewareService { service }))
     }
 }
 
-#[derive(Clone)]
-pub struct AuthMiddleware {
-    config: AuthConfig,
+pub struct AuthMiddlewareService<S> {
+    service: S,
 }
 
-impl AuthMiddleware {
-    pub fn new(config: AuthConfig) -> Self {
-        Self { config }
-    }
+impl<S, B> Service<ServiceRequest> for AuthMiddlewareService<S>
+where
+    S: Service<ServiceRequest, Response = ServiceResponse<B>, Error = Error>,
+    S::Future: 'static,
+    B: 'static,
+{
+    type Response = ServiceResponse<EitherBody<B>>;
+    type Error = Error;
+    type Future = LocalBoxFuture<'static, Result<Self::Response, Self::Error>>;
 
-    pub fn generate_token(&self, user_id: &str, role: Role) -> Result<String, Error> {
-        let now = Utc::now();
-        let exp = now + Duration::seconds(self.config.token_expiration);
-        
-        let claims = Claims {
-            sub: user_id.to_string(),
-            role,
-            exp: exp.timestamp(),
-            iat: now.timestamp(),
+    forward_ready!(service);
+
+    fn call(&self, req: ServiceRequest) -> Self::Future {
+        // Extract the token from the Authorization header
+        let auth_header = req.headers().get("Authorization");
+        let auth_header = match auth_header {
+            Some(header) => header,
+            None => {
+                let (http_req, _) = req.into_parts();
+                let response = HttpResponse::Unauthorized()
+                    .json(serde_json::json!({
+                        "error": "No authorization header"
+                    }));
+                return Box::pin(async move {
+                    Ok(ServiceResponse::new(
+                        http_req,
+                        response.map_into_right_body(),
+                    ))
+                });
+            }
         };
 
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(self.config.jwt_secret.as_bytes()),
-        )
-        .map_err(|e| ErrorUnauthorized(e.to_string()))
-    }
+        // Parse the Bearer token
+        let auth_str = match auth_header.to_str() {
+            Ok(str) => str,
+            Err(_) => {
+                let (http_req, _) = req.into_parts();
+                let response = HttpResponse::Unauthorized()
+                    .json(serde_json::json!({
+                        "error": "Invalid authorization header format"
+                    }));
+                return Box::pin(async move {
+                    Ok(ServiceResponse::new(
+                        http_req,
+                        response.map_into_right_body(),
+                    ))
+                });
+            }
+        };
 
-    pub fn verify_token(&self, token: &str) -> Result<Claims, Error> {
-        let decoded = decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(self.config.jwt_secret.as_bytes()),
-            &Validation::default(),
-        )
-        .map_err(|e| ErrorUnauthorized(e.to_string()))?;
+        let token = match auth_str.strip_prefix("Bearer ") {
+            Some(token) => token,
+            None => {
+                let (http_req, _) = req.into_parts();
+                let response = HttpResponse::Unauthorized()
+                    .json(serde_json::json!({
+                        "error": "Invalid token format"
+                    }));
+                return Box::pin(async move {
+                    Ok(ServiceResponse::new(
+                        http_req,
+                        response.map_into_right_body(),
+                    ))
+                });
+            }
+        };
 
-        Ok(decoded.claims)
-    }
-
-    pub fn verify_request(&self, req: &ServiceRequest) -> Result<Claims, Error> {
-        let auth_header = req
-            .headers()
-            .get("Authorization")
-            .ok_or_else(|| ErrorUnauthorized("Missing authorization header"))?;
-
-        let auth_str = auth_header.to_str()
-            .map_err(|_| ErrorUnauthorized("Invalid authorization header"))?;
-
-        if !auth_str.starts_with("Bearer ") {
-            return Err(ErrorUnauthorized("Invalid authorization header format"));
+        // Validate the token
+        match validate_token(token) {
+            Ok(_claims) => {
+                // Token is valid, proceed with the request
+                let fut = self.service.call(req);
+                Box::pin(async move {
+                    let res = fut.await?;
+                    Ok(res.map_into_left_body())
+                })
+            }
+            Err(_) => {
+                let (http_req, _) = req.into_parts();
+                let response = HttpResponse::Unauthorized()
+                    .json(serde_json::json!({
+                        "error": "Invalid token"
+                    }));
+                Box::pin(async move {
+                    Ok(ServiceResponse::new(
+                        http_req,
+                        response.map_into_right_body(),
+                    ))
+                })
+            }
         }
-
-        let token = &auth_str[7..];
-        self.verify_token(token)
     }
 }
 
-pub fn require_role(role: Role, config: AuthConfig) -> impl Fn(ServiceRequest) -> Pin<Box<dyn Future<Output = Result<ServiceRequest, Error>>>> {
-    let middleware = AuthMiddleware::new(config);
-    
-    move |req: ServiceRequest| {
-        let middleware = middleware.clone();
-        Box::pin(async move {
-            let claims = middleware.verify_request(&req)?;
-            if claims.role != role {
-                return Err(ErrorUnauthorized("Insufficient permissions"));
-            }
-            Ok(req)
-        })
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum Role {
+    User,
+    Admin,
+}
+
+impl ToString for Role {
+    fn to_string(&self) -> String {
+        match self {
+            Role::User => "user".to_string(),
+            Role::Admin => "admin".to_string(),
+        }
     }
 } 

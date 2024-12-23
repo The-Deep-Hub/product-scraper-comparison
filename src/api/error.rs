@@ -1,44 +1,51 @@
-use actix_web::{HttpResponse, ResponseError};
+use actix_web::{
+    error::ResponseError,
+    http::StatusCode,
+    HttpResponse,
+};
+use derive_more::Display;
 use serde::Serialize;
-use std::fmt;
+use serde_json::json;
 
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub message: String,
-}
+use crate::db::error::DbError;
 
-#[derive(Debug)]
+#[derive(Debug, Display, Serialize)]
+#[serde(untagged)]
 pub enum ApiError {
-    BadRequest(String),
-    Unauthorized(String),
+    #[display(fmt = "Not Found: {}", _0)]
     NotFound(String),
+    #[display(fmt = "Bad Request: {}", _0)]
+    BadRequest(String),
+    #[display(fmt = "Unauthorized: {}", _0)]
+    Unauthorized(String),
+    #[display(fmt = "Internal Server Error: {}", _0)]
     InternalServerError(String),
-}
-
-impl fmt::Display for ApiError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            ApiError::BadRequest(msg) => write!(f, "Bad Request: {}", msg),
-            ApiError::Unauthorized(msg) => write!(f, "Unauthorized: {}", msg),
-            ApiError::NotFound(msg) => write!(f, "Not Found: {}", msg),
-            ApiError::InternalServerError(msg) => write!(f, "Internal Server Error: {}", msg),
-        }
-    }
 }
 
 impl ResponseError for ApiError {
     fn error_response(&self) -> HttpResponse {
-        let error_response = ErrorResponse {
-            message: self.to_string(),
-        };
+        let status = self.status_code();
+        let message = self.to_string();
+        HttpResponse::build(status).json(json!({ "error": message }))
+    }
 
+    fn status_code(&self) -> StatusCode {
         match self {
-            ApiError::BadRequest(_) => HttpResponse::BadRequest().json(error_response),
-            ApiError::Unauthorized(_) => HttpResponse::Unauthorized().json(error_response),
-            ApiError::NotFound(_) => HttpResponse::NotFound().json(error_response),
-            ApiError::InternalServerError(_) => {
-                HttpResponse::InternalServerError().json(error_response)
-            }
+            ApiError::NotFound(_) => StatusCode::NOT_FOUND,
+            ApiError::BadRequest(_) => StatusCode::BAD_REQUEST,
+            ApiError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            ApiError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl From<DbError> for ApiError {
+    fn from(error: DbError) -> Self {
+        match error {
+            DbError::NotFound(msg) => ApiError::NotFound(msg),
+            DbError::ValidationError(msg) => ApiError::BadRequest(msg),
+            DbError::MongoError(err) => ApiError::InternalServerError(err.to_string()),
+            DbError::InternalError(msg) => ApiError::InternalServerError(msg),
         }
     }
 } 

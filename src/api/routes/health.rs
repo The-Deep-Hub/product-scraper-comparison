@@ -1,19 +1,14 @@
-use actix_web::{web, HttpResponse, Scope};
-use serde::Serialize;
-use crate::api::response::ApiResponse;
+use actix_web::{get, web::ServiceConfig, HttpResponse, Responder};
+use chrono::Utc;
 
-#[derive(Serialize)]
-struct HealthResponse {
-    status: String,
-}
-
-async fn health_check() -> HttpResponse {
-    HttpResponse::Ok().json(ApiResponse::success(HealthResponse {
-        status: "ok".to_string(),
+#[get("/health")]
+pub async fn health_check() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({
+        "status": "ok",
+        "timestamp": Utc::now().to_rfc3339()
     }))
 }
 
-pub fn health_routes() -> Scope {
-    web::scope("/health")
-        .route("", web::get().to(health_check))
+pub fn config(cfg: &mut ServiceConfig) {
+    cfg.service(health_check);
 } 
