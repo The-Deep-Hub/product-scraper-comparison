@@ -10,6 +10,7 @@ use crate::{
     error::AppResult,
 };
 
+#[derive(Clone)]
 pub struct ScrapingRepository {
     tasks: Collection<ScrapingTask>,
     results: Collection<ScrapingResult>,
