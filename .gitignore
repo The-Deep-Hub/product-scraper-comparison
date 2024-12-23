@@ -45,3 +45,8 @@ credentials.json
 # Ignore environment-specific files
 .env
 .envrc
+
+# Environment variables
+.env
+.env.*
+!.env.example
