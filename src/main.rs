@@ -1,46 +1,63 @@
-use mongodb::Client;
-use redis::aio::ConnectionManager;
-use std::env;
-use rust_scraper::api::start_server;
+use std::sync::Arc;
+use std::time::Duration;
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
-    dotenv::dotenv().ok();
+use api::start_server;
+use clients::zyte::ZyteClient;
+use services::cache::RedisCache;
+use services::queue::RabbitMQQueue;
+use services::scraper::ScraperServiceImpl;
+use services::worker::WorkerService;
+use tracing::info;
 
-    let db_name = env::var("MONGO_DATABASE").expect("MONGO_DATABASE must be set");
+mod api;
+mod clients;
+mod db;
+mod error;
+mod middleware;
+mod models;
+mod scrapers;
+mod services;
 
-    // Construct MongoDB URI
-    let mongo_uri = format!(
-        "mongodb://{}:{}@{}:{}/{}",
-        env::var("MONGO_APP_USERNAME").expect("MONGO_APP_USERNAME must be set"),
-        env::var("MONGO_APP_PASSWORD").expect("MONGO_APP_PASSWORD must be set"),
-        env::var("MONGO_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("MONGO_PORT").unwrap_or_else(|_| "27017".to_string()),
-        db_name
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing
+    tracing_subscriber::fmt::init();
+
+    info!("Starting application");
+
+    // Initialize services
+    let zyte_client = ZyteClient::new()?;
+    let cache_service = Arc::new(RedisCache::new().await?);
+    let queue_service = Arc::new(RabbitMQQueue::new().await?);
+    let scraper_service = Arc::new(ScraperServiceImpl::new(
+        zyte_client.clone(),
+        Arc::clone(&cache_service),
+        Arc::clone(&queue_service),
+    ));
+
+    // Initialize worker service
+    let worker_service = WorkerService::new(
+        Arc::clone(&queue_service),
+        Arc::clone(&scraper_service),
+        Duration::from_secs(5),
+        5,
     );
 
-    // Construct Redis URI
-    let redis_uri = format!(
-        "redis://:{}@{}:{}",
-        env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set"),
-        env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string())
-    );
+    // Start worker service in a separate task
+    tokio::spawn(async move {
+        if let Err(e) = worker_service.start().await {
+            eprintln!("Worker service error: {}", e);
+        }
+    });
 
-    // Construct RabbitMQ URI
-    let rabbitmq_uri = format!(
-        "amqp://{}:{}@{}:{}{}",
-        env::var("RABBITMQ_USER").expect("RABBITMQ_USER must be set"),
-        env::var("RABBITMQ_PASSWORD").expect("RABBITMQ_PASSWORD must be set"),
-        env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
-        env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string())
-    );
+    // Start API server
+    start_server(
+        "127.0.0.1:8080",
+        Arc::clone(&cache_service),
+        Arc::clone(&queue_service),
+        Arc::clone(&scraper_service),
+    )
+    .await?;
 
-    let mongo_client = Client::with_uri_str(&mongo_uri).await.expect("Failed to connect to MongoDB");
-    let mongo_db = mongo_client.database(&db_name);
-    let redis_client = redis::Client::open(redis_uri).expect("Failed to connect to Redis");
-    let redis_manager = ConnectionManager::new(redis_client).await.expect("Failed to create Redis connection manager");
-
-    start_server(mongo_db, redis_manager, &rabbitmq_uri).await
+    Ok(())
 }

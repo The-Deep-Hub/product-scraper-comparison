@@ -1,284 +1,140 @@
-# 🕷️ Rust Scraper Project
+# Product Scraping API
 
-[![Build Status](https://github.com/your-org/rust-scraper/workflows/CI/badge.svg)](https://github.com/your-org/rust-scraper/actions)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Rust Version](https://img.shields.io/badge/rust-stable-brightgreen.svg)](https://www.rust-lang.org)
-[![Infrastructure](https://img.shields.io/badge/infrastructure-terraform-844fba.svg)](https://www.terraform.io)
-[![Code Coverage](https://img.shields.io/codecov/c/github/your-org/rust-scraper)](https://codecov.io/gh/your-org/rust-scraper)
-[![Dependency Status](https://deps.rs/repo/github/your-org/rust-scraper/status.svg)](https://deps.rs/repo/github/your-org/rust-scraper)
-[![Docker Pulls](https://img.shields.io/docker/pulls/your-org/rust-scraper)](https://hub.docker.com/r/your-org/rust-scraper)
-[![Documentation](https://img.shields.io/badge/docs-latest-blue.svg)](https://docs.rs/rust-scraper)
+A Rust-based API for scraping product information from various home improvement stores.
 
-<div align="center">
+## Features
 
-> 🚀 A high-performance, distributed web scraping system built with Rust 🦀, featuring task processing, caching, and high availability for production environments.
+- Product search across multiple stores
+- Detailed product information retrieval
+- Caching system for improved performance
+- Background worker for asynchronous scraping
+- JWT-based authentication
+- Rate limiting and request throttling
+- Support for multiple stores (Leroy Merlin, with more to come)
 
-[Getting Started](#-quick-start) •
-[Features](#-features) •
-[Documentation](#-documentation) •
-[Contributing](#-contributing)
+## Architecture
 
-</div>
+The application is built using a microservices architecture with the following components:
 
----
+- **API Server**: Handles HTTP requests and responses
+- **Cache Service**: Redis-based caching for search results and product details
+- **Queue Service**: RabbitMQ-based task queue for background processing
+- **Worker Service**: Processes queued tasks for detailed product information
+- **Scraper Service**: Manages the scraping logic for different stores
+- **Database**: MongoDB for storing user and product information
 
-## ✨ Features
+## Prerequisites
 
-<div align="center">
+- Rust (latest stable version)
+- Docker and Docker Compose
+- MongoDB
+- Redis
+- RabbitMQ
+- Zyte API Key (for proxy service)
 
-| Feature | Description |
-|---------|-------------|
-| 🚀 **High Performance** | Built with Rust for maximum efficiency and low resource usage |
-| 🔄 **Distributed Processing** | RabbitMQ-based task distribution for scalable operations |
-| 💾 **Smart Caching** | Redis-backed caching system with intelligent invalidation |
-| ⚡ **Scalable Architecture** | From development to production-ready infrastructure |
-| 🛡️ **Enterprise Security** | End-to-end security with AWS best practices |
-| 💰 **Cost Optimization** | Optimized for AWS free tier in development |
-| 🔍 **Flexible Scraping** | Support for multiple scraping strategies and patterns |
-| 📊 **Rich Analytics** | Built-in metrics and monitoring capabilities |
+## Setup
 
-</div>
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/rust_scraper.git
+   cd rust_scraper
+   ```
 
-## 🏗️ Architecture
+2. Copy the example environment file and update it with your configuration:
+   ```bash
+   cp .env.example .env
+   ```
 
-<details>
-<summary><b>Development Environment</b></summary>
+3. Start the required services using Docker Compose:
+   ```bash
+   docker-compose up -d
+   ```
 
-```mermaid
-graph TB
-    subgraph AWS["AWS Region (us-east-1)"]
-        subgraph VPC["VPC (10.0.0.0/16)"]
-            subgraph Public["Public Subnet"]
-                EC2["EC2 t2.micro"]
-                subgraph Docker["Docker Containers"]
-                    Redis["Redis"]
-                    RMQ["RabbitMQ"]
-                end
-            end
-        end
-    end
+4. Build and run the application:
+   ```bash
+   cargo build
+   cargo run
+   ```
 
-    style AWS fill:#232F3E,stroke:#FF9900,stroke-width:2px
-    style VPC fill:#FF9900,stroke:#232F3E,stroke-width:2px
-    style Public fill:#FFFFFF,stroke:#232F3E,stroke-width:2px
-    style EC2 fill:#D86613,stroke:#232F3E,stroke-width:2px
-    style Docker fill:#2496ED,stroke:#232F3E,stroke-width:2px
-```
-</details>
+## API Endpoints
 
-<details>
-<summary><b>Production Environment</b></summary>
+### Authentication
 
-```mermaid
-graph TB
-    subgraph AWS["AWS Region (us-east-1)"]
-        subgraph VPC["VPC (10.1.0.0/16)"]
-            subgraph AZ1["Availability Zone 1"]
-                Redis1["Redis Primary"]
-                RMQ1["RabbitMQ Primary"]
-                ASG1["Auto Scaling Group"]
-            end
-            subgraph AZ2["Availability Zone 2"]
-                Redis2["Redis Replica"]
-                RMQ2["RabbitMQ Secondary"]
-                ASG2["Auto Scaling Group"]
-            end
-            ALB["Application Load Balancer"]
-        end
-    end
+- `POST /api/auth/register`: Register a new user
+- `POST /api/auth/login`: Login and receive JWT token
 
-    style AWS fill:#232F3E,stroke:#FF9900,stroke-width:2px
-    style VPC fill:#FF9900,stroke:#232F3E,stroke-width:2px
-    style AZ1 fill:#FFFFFF,stroke:#232F3E,stroke-width:2px
-    style AZ2 fill:#FFFFFF,stroke:#232F3E,stroke-width:2px
-    style ALB fill:#D86613,stroke:#232F3E,stroke-width:2px
-```
-</details>
+### Product Search
 
-## 🚀 Quick Start
+- `POST /api/scraper`: Search for products
+  ```json
+  {
+    "query": "hammer",
+    "store": "leroy_merlin"
+  }
+  ```
 
-### System Requirements
+### Product Details
 
-<div align="center">
+- `GET /api/scraper/{product_url}`: Get detailed product information
 
-| Tool      | Version | Purpose | Installation |
-|-----------|---------|----------|--------------|
-| Rust      | stable  | Core development | [Install](https://rustup.rs/) |
-| Docker    | latest  | Local services | [Install](https://docs.docker.com/get-docker/) |
-| AWS CLI   | v2      | Cloud management | [Install](https://aws.amazon.com/cli/) |
-| Terraform | ≥1.0.0  | Infrastructure | [Install](https://www.terraform.io/downloads.html) |
+## Worker Service
 
-</div>
+The worker service processes queued tasks in the background:
 
-### Development Setup
+1. Polls the queue for pending tasks
+2. Processes tasks concurrently (configurable limit)
+3. Updates product details in the cache
+4. Handles retries and error reporting
 
-1️⃣ **Clone and Setup**
+## Caching Strategy
+
+- Search results are cached for 1 hour
+- Product details are cached for 24 hours
+- Cache is automatically invalidated when updates occur
+
+## Configuration
+
+Key environment variables:
+
+- `ZYTE_API_KEY`: Your Zyte API key for proxy service
+- `ZYTE_CONCURRENT_REQUESTS`: Maximum concurrent requests to Zyte
+- `WORKER_POLLING_INTERVAL`: Worker polling interval in seconds
+- `WORKER_MAX_CONCURRENT_TASKS`: Maximum concurrent worker tasks
+
+## Development
+
+### Running Tests
+
 ```bash
-# Clone the repository
-git clone https://github.com/your-org/rust-scraper.git
-cd rust-scraper
-
-# Install dependencies
-cargo install --path .
+cargo test
 ```
 
-2️⃣ **Configure AWS**
+### Code Style
+
 ```bash
-aws configure  # Set up your AWS credentials
+cargo fmt
+cargo clippy
 ```
 
-3️⃣ **Initialize Infrastructure**
-```bash
-# Setup Terraform backend
-cd terraform/bootstrap
-terraform init && terraform apply
+## TODO
 
-# Deploy development environment
-cd ../environments/dev
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars with your IP
-terraform init && terraform apply
-```
+- [ ] Implement additional store scrapers (Bricodepot, Bauhaus, Obramat)
+- [ ] Add price history tracking
+- [ ] Implement product availability notifications
+- [ ] Add product comparison feature
+- [ ] Improve error handling and retry mechanisms
+- [ ] Add metrics and monitoring
+- [ ] Implement rate limiting per user
+- [ ] Add API documentation using OpenAPI/Swagger
 
-4️⃣ **Run the Application**
-```bash
-cargo run  # Start the application
-```
-
-## 🌳 Branch Strategy
-
-<div align="center">
-
-```mermaid
-gitGraph
-   commit tag:"v1.0.0"
-   branch develop
-   checkout develop
-   commit
-   branch feature/new-feature
-   checkout feature/new-feature
-   commit
-   commit
-   checkout develop
-   merge feature/new-feature
-   branch bugfix/fix
-   checkout bugfix/fix
-   commit
-   checkout develop
-   merge bugfix/fix
-   checkout main
-   merge develop tag:"v1.1.0"
-   branch hotfix/critical
-   checkout hotfix/critical
-   commit tag:"v1.1.1"
-   checkout main
-   merge hotfix/critical
-```
-
-</div>
-
-## 🔄 CI/CD Pipeline
-
-<div align="center">
-
-| Stage | Development | Production | Description |
-|-------|------------|------------|-------------|
-| Build | ✅ Automatic | ✅ Automatic | Compile and package application |
-| Test | ✅ Automatic | ✅ Automatic | Run unit and integration tests |
-| Security Scan | ✅ Automatic | ✅ Automatic | Vulnerability assessment |
-| Deploy | ✅ Automatic | ⚡ Manual Approval | Environment deployment |
-| Rollback | ✅ Automatic | ✅ Automatic | Failure recovery |
-
-</div>
-
-## 📁 Project Structure
-
-<details>
-<summary><b>Expand Project Tree</b></summary>
-
-```
-├── 📂 src/
-│   ├── 📂 api/          # RESTful API endpoints
-│   ├── 📂 core/         # Core business logic
-│   ├── 📂 scrapers/     # Scraping implementations
-│   ├── 📂 workers/      # Async task processors
-│   ├── 📂 clients/      # External service clients
-│   └── 📂 utils/        # Shared utilities
-├── 📂 terraform/
-│   ├── 📂 bootstrap/    # Backend configuration
-│   ├── 📂 modules/      # Reusable components
-│   └── 📂 environments/ # Environment configs
-└── 📂 docs/
-    └── 📂 infrastructure/  # Technical documentation
-```
-</details>
-
-## 💰 Cost Management
-
-<div align="center">
-
-| Resource | Development | Production | Optimization Tips |
-|----------|------------|------------|------------------|
-| Compute | Free tier | ~$52/month | Use spot instances |
-| Storage | Free tier | ~$20/month | Enable lifecycle policies |
-| Network | ~$0-5/month | ~$64/month | Configure VPC endpoints |
-| Services | ~$0-5/month | ~$244/month | Use reserved instances |
-| **Total** | **~$0-10/month** | **~$380/month** | Potential 30% savings |
-
-</div>
-
-## 🔐 Security Features
-
-<div align="center">
-
-| Category | Features | Implementation |
-|----------|----------|----------------|
-| 🔒 **Infrastructure** | Private subnets<br>Security groups<br>VPC endpoints | AWS Security Best Practices |
-| 🔑 **Authentication** | AWS IAM roles<br>Service credentials<br>API authentication | Zero-trust Architecture |
-| 🛡️ **Data Protection** | Encryption at rest<br>Encryption in transit<br>Secrets management | AWS KMS Integration |
-
-</div>
-
-## 📚 Documentation
-
-<div align="center">
-
-| Document | Description | Audience |
-|----------|-------------|----------|
-| [Infrastructure](docs/infrastructure/README.md) | Detailed setup guide | DevOps Engineers |
-| [Architecture](docs/infrastructure/ARCHITECTURE.md) | System design | System Architects |
-| [Contributing](docs/CONTRIBUTING.md) | Development guide | Developers |
-
-</div>
-
-## 🤝 Contributing
-
-We welcome contributions! Please see our [Contributing Guidelines](docs/CONTRIBUTING.md).
-
-<details>
-<summary><b>Contribution Process</b></summary>
+## Contributing
 
 1. Fork the repository
-2. Create your feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'feat: add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a Pull Request
 
-</details>
+## License
 
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
----
-
-<div align="center">
-
-**[Website](https://your-org.com)** •
-**[Documentation](https://docs.your-org.com)** •
-**[Report Bug](https://github.com/your-org/rust-scraper/issues)** •
-**[Request Feature](https://github.com/your-org/rust-scraper/issues)**
-
-Made with ❤️ by Your Organization
-
-</div>
+This project is licensed under the MIT License - see the LICENSE file for details.
