@@ -1,74 +1,98 @@
-use async_trait::async_trait;
-use redis::aio::ConnectionManager;
+use std::time::Duration;
+use redis::AsyncCommands;
+use crate::{
+    error::{AppError, AppResult},
+    models::Product,
+};
 
-use crate::error::AppResult;
-
-#[async_trait]
+#[async_trait::async_trait]
 pub trait CacheService: Send + Sync {
-    async fn get(&self, key: &str) -> AppResult<Option<String>>;
-    async fn set(&self, key: &str, value: &str, ttl_secs: Option<u64>) -> AppResult<()>;
+    async fn get_search_results(&self, query: &str) -> AppResult<Option<Vec<Product>>>;
+    async fn set_search_results(&self, query: &str, products: &[Product]) -> AppResult<()>;
+    async fn get_product_details(&self, url: &str) -> AppResult<Option<Product>>;
+    async fn set_product_details(&self, product: &Product) -> AppResult<()>;
+    async fn get_string(&self, key: &str) -> AppResult<Option<String>>;
+    async fn set_string(&self, key: &str, value: &str, expiry: Option<Duration>) -> AppResult<()>;
     async fn delete(&self, key: &str) -> AppResult<()>;
-    async fn get_popular_searches(&self, limit: i32) -> AppResult<Vec<String>>;
 }
 
 #[derive(Clone)]
 pub struct RedisCacheService {
-    client: ConnectionManager,
+    client: redis::aio::ConnectionManager,
 }
 
 impl RedisCacheService {
-    pub fn new(client: ConnectionManager) -> Self {
+    pub fn new(client: redis::aio::ConnectionManager) -> Self {
         Self { client }
     }
 }
 
-#[async_trait]
+#[async_trait::async_trait]
 impl CacheService for RedisCacheService {
-    async fn get(&self, key: &str) -> AppResult<Option<String>> {
-        let mut conn = self.client.clone();
-        let value: Option<String> = redis::cmd("GET")
-            .arg(key)
-            .query_async::<_, Option<String>>(&mut conn)
-            .await?;
-        Ok(value)
+    async fn get_search_results(&self, query: &str) -> AppResult<Option<Vec<Product>>> {
+        if let Some(data) = self.get_string(&format!("search:{}", query)).await? {
+            Ok(Some(serde_json::from_str(&data)?))
+        } else {
+            Ok(None)
+        }
     }
 
-    async fn set(&self, key: &str, value: &str, ttl_secs: Option<u64>) -> AppResult<()> {
-        let mut conn = self.client.clone();
-        if let Some(ttl) = ttl_secs {
-            redis::cmd("SETEX")
-                .arg(key)
-                .arg(ttl)
-                .arg(value)
-                .query_async::<_, ()>(&mut conn)
-                .await?;
+    async fn set_search_results(&self, query: &str, products: &[Product]) -> AppResult<()> {
+        let json = serde_json::to_string(products)?;
+        self.set_string(
+            &format!("search:{}", query),
+            &json,
+            Some(Duration::from_secs(3600)),
+        )
+        .await
+    }
+
+    async fn get_product_details(&self, url: &str) -> AppResult<Option<Product>> {
+        if let Some(data) = self.get_string(&format!("product:{}", url)).await? {
+            Ok(Some(serde_json::from_str(&data)?))
         } else {
-            redis::cmd("SET")
-                .arg(key)
-                .arg(value)
-                .query_async::<_, ()>(&mut conn)
-                .await?;
+            Ok(None)
         }
-        Ok(())
+    }
+
+    async fn set_product_details(&self, product: &Product) -> AppResult<()> {
+        let json = serde_json::to_string(product)?;
+        self.set_string(
+            &format!("product:{}", product.url),
+            &json,
+            Some(Duration::from_secs(86400)),
+        )
+        .await
+    }
+
+    async fn get_string(&self, key: &str) -> AppResult<Option<String>> {
+        let mut conn = self.client.clone();
+        let result: Option<String> = conn
+            .get(key)
+            .await
+            .map_err(|e| AppError::RedisError(e))?;
+        Ok(result)
+    }
+
+    async fn set_string(&self, key: &str, value: &str, expiry: Option<Duration>) -> AppResult<()> {
+        let mut conn = self.client.clone();
+        let result: () = if let Some(expiry) = expiry {
+            redis::pipe()
+                .atomic()
+                .set(key, value)
+                .expire(key, expiry.as_secs() as usize)
+                .query_async(&mut conn)
+                .await
+        } else {
+            conn.set(key, value).await
+        }
+        .map_err(|e| AppError::RedisError(e))?;
+        Ok(result)
     }
 
     async fn delete(&self, key: &str) -> AppResult<()> {
         let mut conn = self.client.clone();
-        redis::cmd("DEL")
-            .arg(key)
-            .query_async::<_, ()>(&mut conn)
-            .await?;
+        let _: () = conn.del(key).await.map_err(|e| AppError::RedisError(e))?;
         Ok(())
-    }
-
-    async fn get_popular_searches(&self, limit: i32) -> AppResult<Vec<String>> {
-        let mut conn = self.client.clone();
-        let searches: Vec<String> = redis::cmd("ZREVRANGE")
-            .arg("popular_searches")
-            .arg(0)
-            .arg(limit - 1)
-            .query_async::<_, Vec<String>>(&mut conn)
-            .await?;
-        Ok(searches)
     }
 } 

@@ -1,46 +1,29 @@
-use mongodb::Client;
-use redis::aio::ConnectionManager;
-use std::env;
-use rust_scraper::api::start_server;
+use actix_web::{middleware, App, HttpServer};
+use rust_scraper::{
+    services::queue::RabbitMQQueue,
+    api::configure_app,
+};
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter("rust_scraper=debug")
+        .init();
+
+    // Load environment variables
     dotenv::dotenv().ok();
 
-    let db_name = env::var("MONGO_DATABASE").expect("MONGO_DATABASE must be set");
-
-    // Construct MongoDB URI
-    let mongo_uri = format!(
-        "mongodb://{}:{}@{}:{}/{}",
-        env::var("MONGO_APP_USERNAME").expect("MONGO_APP_USERNAME must be set"),
-        env::var("MONGO_APP_PASSWORD").expect("MONGO_APP_PASSWORD must be set"),
-        env::var("MONGO_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("MONGO_PORT").unwrap_or_else(|_| "27017".to_string()),
-        db_name
-    );
-
-    // Construct Redis URI
-    let redis_uri = format!(
-        "redis://:{}@{}:{}",
-        env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set"),
-        env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string())
-    );
-
-    // Construct RabbitMQ URI
-    let rabbitmq_uri = format!(
-        "amqp://{}:{}@{}:{}{}",
-        env::var("RABBITMQ_USER").expect("RABBITMQ_USER must be set"),
-        env::var("RABBITMQ_PASSWORD").expect("RABBITMQ_PASSWORD must be set"),
-        env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
-        env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
-        env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string())
-    );
-
-    let mongo_client = Client::with_uri_str(&mongo_uri).await.expect("Failed to connect to MongoDB");
-    let mongo_db = mongo_client.database(&db_name);
-    let redis_client = redis::Client::open(redis_uri).expect("Failed to connect to Redis");
-    let redis_manager = ConnectionManager::new(redis_client).await.expect("Failed to create Redis connection manager");
-
-    start_server(mongo_db, redis_manager, &rabbitmq_uri).await
+    // Initialize services
+    let queue_service = RabbitMQQueue::new().await.expect("Failed to initialize queue service");
+    
+    // Create HTTP server
+    HttpServer::new(move || {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .configure(|cfg| configure_app(cfg, queue_service.clone()))
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }

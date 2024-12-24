@@ -35,12 +35,11 @@ async fn retry_task(
     // Create a new search request from the task
     let request = SearchRequest {
         query: task.query.clone(),
-        stores: Some(vec![task.store.parse().unwrap()]),
-        num_products: Some(10),
+        store: task.store,
     };
 
     // Publish the task to the queue
-    queue.publish_task(&request, 0).await?;
+    queue.get_ref().enqueue_product_details_task(&request.query).await?;
 
     // Update task status
     repo.update_task_status(task_id, "pending").await?;
