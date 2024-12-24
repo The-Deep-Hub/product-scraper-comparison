@@ -68,18 +68,18 @@ pub async fn get_task_status(
         "completed" => {
             let products = cache_service.get_search_results(&task.query).await?;
             TaskStatusResponse {
-                status: task.status,
+                status: task.status.to_string(),
                 products,
                 error: None,
             }
         }
         "failed" => TaskStatusResponse {
-            status: task.status,
+            status: task.status.to_string(),
             products: None,
             error: task.error,
         },
         _ => TaskStatusResponse {
-            status: task.status,
+            status: task.status.to_string(),
             products: None,
             error: None,
         },

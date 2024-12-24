@@ -1,36 +1,33 @@
 # Product Scraping API
 
-A Rust-based API for scraping product information from various home improvement stores.
+A Rust-based API for scraping product information from various home improvement stores, featuring parallel scraping, caching, and asynchronous task processing.
 
 ## Features
 
-- Product search across multiple stores
-- Detailed product information retrieval
-- Caching system for improved performance
-- Background worker for asynchronous scraping
-- JWT-based authentication
-- Rate limiting and request throttling
-- Support for multiple stores (Leroy Merlin, with more to come)
+- Multi-store product search (Leroy Merlin, Bauhaus, Bricodepot)
+- Parallel scraping across all supported stores
+- Redis-based caching system
+- RabbitMQ task queue for asynchronous processing
+- Background worker with concurrent task processing
+- Zyte (formerly ScrapingHub) integration for reliable scraping
 
 ## Architecture
 
-The application is built using a microservices architecture with the following components:
+The application consists of several components:
 
-- **API Server**: Handles HTTP requests and responses
-- **Cache Service**: Redis-based caching for search results and product details
-- **Queue Service**: RabbitMQ-based task queue for background processing
-- **Worker Service**: Processes queued tasks for detailed product information
-- **Scraper Service**: Manages the scraping logic for different stores
-- **Database**: MongoDB for storing user and product information
+- **API Server**: Handles HTTP requests and manages the scraping workflow
+- **Task Worker**: Processes scraping tasks in parallel across multiple stores
+- **Cache Service**: Redis-based caching for search results
+- **Queue Service**: RabbitMQ-based task queue for asynchronous processing
+- **Scraper Services**: Store-specific scrapers with Zyte integration
 
 ## Prerequisites
 
 - Rust (latest stable version)
 - Docker and Docker Compose
-- MongoDB
 - Redis
 - RabbitMQ
-- Zyte API Key (for proxy service)
+- Zyte API Key
 
 ## Setup
 
@@ -45,61 +42,40 @@ The application is built using a microservices architecture with the following c
    cp .env.example .env
    ```
 
-3. Start the required services using Docker Compose:
+3. Update the following environment variables in `.env`:
+   - `ZYTE_API_KEY`: Your Zyte API key
+   - `REDIS_PASSWORD`: Your Redis password
+   - `AMQP_ADDR`: RabbitMQ connection string
+
+4. Start the required services:
    ```bash
    docker-compose up -d
    ```
 
-4. Build and run the application:
+5. Run the task worker:
    ```bash
-   cargo build
+   cargo run --bin task_worker
+   ```
+
+6. In a separate terminal, run the API server:
+   ```bash
    cargo run
    ```
 
-## API Endpoints
+## Usage
 
-### Authentication
+### Publishing Tasks
 
-- `POST /api/auth/register`: Register a new user
-- `POST /api/auth/login`: Login and receive JWT token
+```bash
+# Publish a scraping task
+cargo run --bin publish_task
+```
 
-### Product Search
+### API Endpoints
 
-- `POST /api/scraper`: Search for products
-  ```json
-  {
-    "query": "hammer",
-    "store": "leroy_merlin"
-  }
-  ```
-
-### Product Details
-
-- `GET /api/scraper/{product_url}`: Get detailed product information
-
-## Worker Service
-
-The worker service processes queued tasks in the background:
-
-1. Polls the queue for pending tasks
-2. Processes tasks concurrently (configurable limit)
-3. Updates product details in the cache
-4. Handles retries and error reporting
-
-## Caching Strategy
-
-- Search results are cached for 1 hour
-- Product details are cached for 24 hours
-- Cache is automatically invalidated when updates occur
-
-## Configuration
-
-Key environment variables:
-
-- `ZYTE_API_KEY`: Your Zyte API key for proxy service
-- `ZYTE_CONCURRENT_REQUESTS`: Maximum concurrent requests to Zyte
-- `WORKER_POLLING_INTERVAL`: Worker polling interval in seconds
-- `WORKER_MAX_CONCURRENT_TASKS`: Maximum concurrent worker tasks
+- `POST /api/scraper`: Start a new scraping task
+- `GET /api/task/{task_id}`: Get task status and results
+- `GET /api/product`: Get product details by URL
 
 ## Development
 
@@ -116,24 +92,14 @@ cargo fmt
 cargo clippy
 ```
 
-## TODO
+## Roadmap
 
-- [ ] Implement additional store scrapers (Bricodepot, Bauhaus, Obramat)
-- [ ] Add price history tracking
-- [ ] Implement product availability notifications
-- [ ] Add product comparison feature
-- [ ] Improve error handling and retry mechanisms
-- [ ] Add metrics and monitoring
-- [ ] Implement rate limiting per user
-- [ ] Add API documentation using OpenAPI/Swagger
-
-## Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Create a Pull Request
+- [ ] Graceful shutdown for task worker
+- [ ] Task retry mechanism with exponential backoff
+- [ ] Health check endpoints
+- [ ] Monitoring and metrics
+- [ ] Rate limiting
+- [ ] API documentation (OpenAPI/Swagger)
 
 ## License
 
