@@ -1,75 +1,61 @@
 use async_trait::async_trait;
 use std::sync::Arc;
 
-use crate::clients::ScrapingClient;
-use crate::error::AppResult;
-use crate::models::product::Product;
-use crate::scrapers::leroy::LeroyScraper;
-use crate::services::cache::CacheService;
-use crate::services::queue::QueueService;
+use crate::{
+    error::AppResult,
+    models::Product,
+    services::{
+        cache::CacheService,
+        queue::RabbitMQQueue,
+    },
+    clients::zyte::ZyteClient,
+};
 
 #[async_trait]
 pub trait ScraperService: Send + Sync {
-    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>>;
     async fn get_product_details(&self, url: &str) -> AppResult<Product>;
+    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>>;
 }
 
 pub struct ScraperServiceImpl {
-    leroy_scraper: LeroyScraper,
-    cache_service: Arc<dyn CacheService>,
-    queue_service: Arc<dyn QueueService>,
+    zyte_client: Arc<ZyteClient>,
+    cache: Arc<dyn CacheService>,
+    queue: RabbitMQQueue,
 }
 
 impl ScraperServiceImpl {
     pub fn new(
-        scraping_client: Arc<dyn ScrapingClient>,
-        cache_service: Arc<dyn CacheService>,
-        queue_service: Arc<dyn QueueService>,
+        zyte_client: Arc<ZyteClient>,
+        cache: Arc<dyn CacheService>,
+        queue: RabbitMQQueue,
     ) -> Self {
         Self {
-            leroy_scraper: LeroyScraper::new(scraping_client),
-            cache_service,
-            queue_service,
+            zyte_client,
+            cache,
+            queue,
         }
     }
 }
 
 #[async_trait]
 impl ScraperService for ScraperServiceImpl {
-    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
-        // Check cache first
-        if let Some(products) = self.cache_service.get_search_results(query).await? {
-            return Ok(products);
-        }
-
-        // If not in cache, scrape and store
-        let products = self.leroy_scraper.search(query).await?;
-        
-        // Store in cache
-        self.cache_service.set_search_results(query, &products).await?;
-        
-        // Queue background tasks for detailed product info
-        for product in &products {
-            self.queue_service
-                .enqueue_product_details_task(&product.url)
-                .await?;
-        }
-
-        Ok(products)
-    }
-
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
-        // Check cache first
-        if let Some(product) = self.cache_service.get_product_details(url).await? {
+        if let Some(product) = self.cache.get_product_details(url).await? {
             return Ok(product);
         }
 
-        // If not in cache, scrape and store
-        let product = self.leroy_scraper.get_product_details(url).await?;
-        
-        // Store in cache
-        self.cache_service.set_product_details(&product).await?;
-
+        let product = self.zyte_client.get_product_details(url).await?;
+        self.cache.set_product_details(&product).await?;
         Ok(product)
+    }
+
+    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
+        if let Some(products) = self.cache.get_search_results(query).await? {
+            return Ok(products);
+        }
+
+        let products = self.zyte_client.search_products(query).await?;
+        self.cache.set_search_results(query, &products).await?;
+        Ok(products)
     }
 } 

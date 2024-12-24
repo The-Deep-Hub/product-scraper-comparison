@@ -6,6 +6,8 @@ use crate::error::AppResult;
 
 pub mod zyte;
 
+pub use zyte::ZyteClient;
+
 #[async_trait]
 pub trait ScrapingClient: Send + Sync {
     async fn get_rendered_html(&self, url: &str) -> AppResult<String>;

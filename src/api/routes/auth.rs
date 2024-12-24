@@ -1,18 +1,13 @@
-use actix_web::{web, HttpResponse, Responder};
-use validator::Validate;
-use std::str::FromStr;
+use actix_web::{
+    web::{self, Data, Json},
+    HttpResponse,
+};
+use bcrypt;
 
 use crate::{
-    error::AppError,
-    db::{
-        models::user::User,
-    },
-    db::repositories::user::UserRepository,
-    api::{
-        middleware::auth::Role,
-        models::auth::{LoginRequest, RegisterRequest},
-        utils::generate_token,
-    },
+    db::{models::user::User, repositories::user::UserRepository},
+    error::{AppError, AppResult},
+    models::auth::{Claims, LoginRequest, RegisterRequest},
 };
 
 pub fn config(cfg: &mut web::ServiceConfig) {
@@ -24,58 +19,63 @@ pub fn config(cfg: &mut web::ServiceConfig) {
 }
 
 async fn register(
-    data: web::Json<RegisterRequest>,
-    user_repo: web::Data<UserRepository>,
-) -> Result<HttpResponse, AppError> {
-    data.validate()?;
-
-    match user_repo.find_by_email(&data.email).await? {
-        Some(_) => Err(AppError::UserAlreadyExists),
-        None => {
-            let user = User::new(data.email.clone(), data.password.clone());
-            let _id = user_repo.create_user(&user).await?;
-            Ok(HttpResponse::Created().json(user))
-        }
+    Json(request): Json<RegisterRequest>,
+    repo: Data<UserRepository>,
+) -> AppResult<HttpResponse> {
+    if request.password != request.password_confirmation {
+        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "Password Mismatch",
+            "message": "Password and confirmation do not match"
+        })));
     }
+
+    let user = User::new(request.email.clone(), request.password);
+    repo.get_ref().create_user(&user).await?;
+
+    Ok(HttpResponse::Created().json(serde_json::json!({
+        "message": "User created successfully",
+        "email": request.email
+    })))
 }
 
 async fn login(
-    repo: web::Data<UserRepository>,
-    request: web::Json<LoginRequest>,
-) -> impl Responder {
-    // Find user by email
-    let user = match repo.find_by_email(&request.email).await {
-        Ok(Some(user)) => user,
-        Ok(None) => {
-            return HttpResponse::Unauthorized().json(serde_json::json!({
-                "error": "Invalid email or password"
-            }));
-        }
-        Err(_) => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "Failed to find user"
-            }));
-        }
+    repo: Data<UserRepository>,
+    Json(request): Json<LoginRequest>,
+) -> AppResult<HttpResponse> {
+    let user = repo.get_ref().find_by_email(&request.email).await?
+        .ok_or_else(|| AppError::NotFound("User not found".into()))?;
+    let is_valid = bcrypt::verify(&request.password, &user.password)?;
+
+    if !is_valid {
+        return Ok(HttpResponse::Unauthorized().json(serde_json::json!({
+            "error": "Invalid Credentials",
+            "message": "Email or password is incorrect"
+        })));
+    }
+
+    let expiration = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize + 24 * 3600; // 24 hours from now
+
+    let claims = Claims {
+        sub: user.id.unwrap().to_string(),
+        email: user.email,
+        role: user.role,
+        exp: expiration,
     };
 
-    // Verify password
-    if !bcrypt::verify(&request.password, &user.password).unwrap_or(false) {
-        return HttpResponse::Unauthorized().json(serde_json::json!({
-            "error": "Invalid email or password"
-        }));
-    }
+    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
+    let token = jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )?;
 
-    // Generate JWT token
-    let role = Role::from_str(&user.role).unwrap_or(Role::User);
-    match generate_token(&user.email, &role) {
-        Ok(token) => HttpResponse::Ok().json(serde_json::json!({
-            "message": "Login successful",
-            "token": token,
-            "email": user.email,
-            "role": user.role
-        })),
-        Err(_) => HttpResponse::InternalServerError().json(serde_json::json!({
-            "error": "Failed to generate token"
-        }))
-    }
+    Ok(HttpResponse::Ok().json(serde_json::json!({
+        "message": "Login successful",
+        "token": token,
+        "email": claims.email,
+        "role": claims.role
+    })))
 } 

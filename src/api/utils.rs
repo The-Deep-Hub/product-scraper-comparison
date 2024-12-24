@@ -1,26 +1,28 @@
-use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
-use std::env;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::api::{middleware::auth::Role, models::auth::Claims};
+use crate::{
+    middleware::Role,
+    models::auth::Claims,
+};
 
 fn get_jwt_secret() -> Vec<u8> {
-    env::var("JWT_SECRET")
-        .unwrap_or_else(|_| "your-256-bit-secret".to_string())
+    std::env::var("JWT_SECRET")
+        .expect("JWT_SECRET must be set")
         .into_bytes()
 }
 
-pub fn generate_token(email: &str, role: &Role) -> Result<String, jsonwebtoken::errors::Error> {
-    let expiration = Utc::now()
-        .checked_add_signed(Duration::hours(24))
-        .expect("valid timestamp")
-        .timestamp() as usize;
+pub fn generate_token(email: &str, role: &Role) -> jsonwebtoken::errors::Result<String> {
+    let expiration = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as usize + 24 * 3600; // 24 hours from now
 
     let claims = Claims {
-        sub: email.to_owned(),
-        exp: expiration,
-        iat: Utc::now().timestamp() as usize,
+        sub: email.to_string(),
+        email: email.to_string(),
         role: role.to_string(),
+        exp: expiration,
     };
 
     encode(

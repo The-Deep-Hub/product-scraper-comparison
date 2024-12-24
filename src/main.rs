@@ -1,63 +1,29 @@
-use std::sync::Arc;
-use std::time::Duration;
+use actix_web::{middleware, App, HttpServer};
+use rust_scraper::{
+    services::queue::RabbitMQQueue,
+    api::configure_app,
+};
 
-use api::start_server;
-use clients::zyte::ZyteClient;
-use services::cache::RedisCache;
-use services::queue::RabbitMQQueue;
-use services::scraper::ScraperServiceImpl;
-use services::worker::WorkerService;
-use tracing::info;
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter("rust_scraper=debug")
+        .init();
 
-mod api;
-mod clients;
-mod db;
-mod error;
-mod middleware;
-mod models;
-mod scrapers;
-mod services;
-
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize tracing
-    tracing_subscriber::fmt::init();
-
-    info!("Starting application");
+    // Load environment variables
+    dotenv::dotenv().ok();
 
     // Initialize services
-    let zyte_client = ZyteClient::new()?;
-    let cache_service = Arc::new(RedisCache::new().await?);
-    let queue_service = Arc::new(RabbitMQQueue::new().await?);
-    let scraper_service = Arc::new(ScraperServiceImpl::new(
-        zyte_client.clone(),
-        Arc::clone(&cache_service),
-        Arc::clone(&queue_service),
-    ));
-
-    // Initialize worker service
-    let worker_service = WorkerService::new(
-        Arc::clone(&queue_service),
-        Arc::clone(&scraper_service),
-        Duration::from_secs(5),
-        5,
-    );
-
-    // Start worker service in a separate task
-    tokio::spawn(async move {
-        if let Err(e) = worker_service.start().await {
-            eprintln!("Worker service error: {}", e);
-        }
-    });
-
-    // Start API server
-    start_server(
-        "127.0.0.1:8080",
-        Arc::clone(&cache_service),
-        Arc::clone(&queue_service),
-        Arc::clone(&scraper_service),
-    )
-    .await?;
-
-    Ok(())
+    let queue_service = RabbitMQQueue::new().await.expect("Failed to initialize queue service");
+    
+    // Create HTTP server
+    HttpServer::new(move || {
+        App::new()
+            .wrap(middleware::Logger::default())
+            .configure(|cfg| configure_app(cfg, queue_service.clone()))
+    })
+    .bind(("127.0.0.1", 8080))?
+    .run()
+    .await
 }
