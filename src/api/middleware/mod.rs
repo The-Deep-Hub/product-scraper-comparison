@@ -1,7 +1,5 @@
-pub mod auth;
-pub mod validation;
-pub mod rate_limit;
+mod error;
+mod logging;
 
-pub use auth::{AuthMiddleware, Role};
-pub use validation::*;
-pub use rate_limit::RateLimiter; 
+pub use error::ErrorResponse;
+pub use logging::Logger; 

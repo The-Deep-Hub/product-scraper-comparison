@@ -1,241 +1,229 @@
+use async_trait::async_trait;
+use scraper::{Html, Selector};
+use serde_json::{Value, json};
 use std::collections::HashMap;
-use serde_json::Value;
-use tracing::{error, info, debug};
+use tracing::{debug, info, error};
+use urlencoding;
 
 use crate::{
-    error::AppResult,
-    models::product::{Product, ProductPrice, Store},
+    error::{AppError, AppResult},
+    models::{
+        product::{Product, ProductPrice},
+        store::Store,
+    },
+    services::scraper::ScraperService,
     clients::zyte::ZyteClient,
-    config,
 };
 
+const BASE_IMAGE_URL: &str = "https://media.adeo.com/media/";
+
 pub struct LeroyScraper {
+    base_url: String,
     client: ZyteClient,
-    config: &'static config::StoreConfig,
 }
 
 impl LeroyScraper {
-    pub fn new(client: ZyteClient) -> Option<Self> {
-        let config = config::get_store_config("leroy")?;
-        Some(Self { client, config })
-    }
-
-    pub async fn scrape(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
-        info!("Starting scrape for query: {}", query);
-        match self.get_product_data(query, num_products).await {
-            Ok(products) => {
-                info!("Successfully scraped {} products", products.len());
-                Ok(products)
-            }
-            Err(e) => {
-                error!("Error scraping Leroy Merlin: {}", e);
-                Ok(vec![])
-            }
+    pub fn new(client: ZyteClient) -> Self {
+        Self {
+            base_url: "https://www.leroymerlin.es".to_string(),
+            client,
         }
     }
 
-    async fn get_product_data(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
-        let search_url = config::build_search_url("leroy", query)
-            .ok_or_else(|| crate::error::AppError::BadRequest("Failed to build search URL".into()))?;
-        
-        info!("Fetching search results from URL: {}", search_url);
-        
-        // First, get the rendered HTML
-        let html = self.client.get_rendered_html(&search_url).await?;
-        debug!("Got HTML response, length: {}", html.len());
-
-        // Extract and parse products
-        let raw_products = self.extract_products_from_html(&html)?;
-        debug!("Found {} raw products", raw_products.len());
-
-        // Process only the requested number of products
-        let mut products = Vec::new();
-        for product_data in raw_products.iter().take(num_products) {
-            if let Some(parsed_product) = self.parse_product(product_data)? {
-                products.push(parsed_product);
-            }
-        }
-
-        info!("Successfully parsed {} products", products.len());
-        Ok(products)
-    }
-
-    fn extract_products_from_html(&self, html: &str) -> AppResult<Vec<Value>> {
-        let document = scraper::Html::parse_document(html);
-        
-        // First, try to find the script tag with product data
-        let selector = scraper::Selector::parse("script.dataTms[type='application/json']")
-            .map_err(|e| crate::error::AppError::BadRequest(e.to_string()))?;
+    fn extract_products_from_html(&self, html: &str) -> Vec<Value> {
+        let document = Html::parse_document(html);
+        let script_selector = Selector::parse("script.dataTms[type='application/json']")
+            .expect("Failed to parse script selector");
 
         let mut all_products = Vec::new();
         
-        // Look for product data in script tags
-        for element in document.select(&selector) {
-            if let Some(script_content) = element.text().next() {
-                debug!("Found script content, attempting to parse");
-                if let Ok(data) = serde_json::from_str::<Vec<Value>>(script_content) {
-                    if !data.is_empty() {
-                        if let Some(products) = data[0].get("value").and_then(|v| v.as_array()) {
-                            all_products.extend(
-                                products
-                                    .iter()
-                                    .filter(|item| {
-                                        item.is_object() 
-                                        && item.get("name").is_some() 
-                                        && item.get("sku").is_some()
-                                    })
-                                    .cloned()
-                            );
+        for script in document.select(&script_selector) {
+            if let Some(content) = script.text().next() {
+                match serde_json::from_str::<Vec<Value>>(content) {
+                    Ok(data) => {
+                        // Check if this is the products list
+                        if let Some(first_item) = data.first() {
+                            if let Some(products) = first_item.get("value").and_then(|v| v.as_array()) {
+                                // Filter valid product items
+                                for product in products {
+                                    if product.get("name").is_some() && product.get("sku").is_some() {
+                                        all_products.push(product.clone());
+                                    }
+                                }
+                            }
                         }
                     }
-                }
-            }
-        }
-
-        if all_products.is_empty() {
-            debug!("No products found in script tags, checking alternative selectors");
-            let product_selector = scraper::Selector::parse(".product-item")
-                .map_err(|e| crate::error::AppError::BadRequest(e.to_string()))?;
-
-            for element in document.select(&product_selector) {
-                if let Some(product) = self.extract_product_from_element(&element) {
-                    all_products.push(product);
-                }
-            }
-        }
-
-        Ok(all_products)
-    }
-
-    fn extract_product_from_element(&self, element: &scraper::ElementRef) -> Option<Value> {
-        let name = element.select(&scraper::Selector::parse(".product-name").ok()?).next()?.text().collect::<String>();
-        let price_str = element.select(&scraper::Selector::parse(".product-price").ok()?).next()?.text().collect::<String>();
-        let url = element.select(&scraper::Selector::parse("a[href]").ok()?).next()?.value().attr("href")?;
-        let sku = url.split('/').last()?;
-
-        let price = price_str
-            .replace('€', "")
-            .replace(',', ".")
-            .trim()
-            .parse::<f64>()
-            .unwrap_or(0.0);
-
-        Some(serde_json::json!({
-            "name": name,
-            "url": url,
-            "sku": sku,
-            "offer": {
-                "price": price
-            }
-        }))
-    }
-
-    fn parse_product(&self, product_data: &Value) -> AppResult<Option<Product>> {
-        match self.extract_required_fields(product_data) {
-            Ok((name, url, price, _original_price, image_url)) => {
-                let mut metadata = HashMap::new();
-                if let Some(obj) = product_data.as_object() {
-                    for (key, value) in obj {
-                        metadata.insert(
-                            key.clone(),
-                            value.as_str()
-                                .map(String::from)
-                                .unwrap_or_else(|| value.to_string()),
-                        );
+                    Err(e) => {
+                        error!("Failed to parse JSON from script tag: {}", e);
                     }
                 }
-
-                Ok(Some(Product {
-                    name,
-                    url,
-                    price: Some(ProductPrice {
-                        amount: price,
-                        currency: "EUR".to_string(),
-                    }),
-                    description: product_data
-                        .get("description")
-                        .and_then(|v| v.as_str())
-                        .map(String::from),
-                    image_url: Some(image_url),
-                    store: Store::LeroyMerlin,
-                    metadata: Some(metadata),
-                }))
-            }
-            Err(e) => {
-                error!("Error parsing product data: {}", e);
-                debug!("Problem product data: {}", serde_json::to_string_pretty(product_data)?);
-                Ok(None)
             }
         }
+
+        all_products
     }
 
-    fn extract_required_fields(&self, product_data: &Value) -> AppResult<(String, String, f64, f64, String)> {
-        let name = product_data
-            .get("name")
-            .and_then(|v| v.as_str())
-            .ok_or_else(|| crate::error::AppError::BadRequest("Missing product name".into()))?
-            .to_string();
+    fn extract_product_from_html(&self, html: &str) -> Option<Value> {
+        let document = Html::parse_document(html);
+        let script_selector = Selector::parse("script[type='application/ld+json']")
+            .expect("Failed to parse script selector");
 
-        let url = if let Some(url) = product_data.get("url").and_then(|v| v.as_str()) {
-            if url.starts_with("http") {
-                url.to_string()
-            } else {
-                format!("{}{}", self.config.base_url, url)
+        for script in document.select(&script_selector) {
+            if let Some(content) = script.text().next() {
+                if let Ok(data) = serde_json::from_str::<Value>(content) {
+                    // Check if this is product data (should have @type: "Product")
+                    if data.get("@type").and_then(|t| t.as_str()) == Some("Product") {
+                        return Some(data);
+                    }
+                }
             }
-        } else {
-            return Err(crate::error::AppError::BadRequest("Missing product URL".into()));
-        };
+        }
 
+        None
+    }
+
+    fn parse_product_details(&self, product_data: &Value) -> Option<Product> {
+        let name = product_data.get("name")?.as_str()?.to_string();
+        
+        // Extract price from offers
         let price = product_data
-            .get("offer")
-            .and_then(|v| v.get("price"))
-            .and_then(|v| v.as_f64())
-            .unwrap_or_else(|| {
-                product_data
-                    .get("price")
-                    .and_then(|v| v.as_f64())
-                    .unwrap_or(0.0)
+            .get("offers")
+            .and_then(|o| o.get("price"))
+            .and_then(|p| p.as_str())
+            .and_then(|p| p.parse::<f64>().ok())
+            .map(|amount| ProductPrice {
+                amount,
+                currency: "EUR".to_string(),
             });
 
-        let original_price = product_data
-            .get("displayed_price")
-            .and_then(|v| v.as_f64())
-            .unwrap_or(price);
+        // Get URL
+        let url = product_data
+            .get("url")
+            .and_then(|u| u.as_str())
+            .map(|u| u.to_string())?;
 
-        let image_url = if let Some(img) = product_data.get("image").and_then(|v| v.as_str()) {
-            if img.starts_with("http") {
-                img.to_string()
-            } else {
-                format!("{}{}", self.config.base_url, img)
+        // Get image URL
+        let image_url = product_data
+            .get("image")
+            .and_then(|i| i.as_str())
+            .map(|i| i.to_string());
+
+        // Get description
+        let description = product_data
+            .get("description")
+            .and_then(|d| d.as_str())
+            .map(|d| d.to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "leroymerlin".to_string());
+        
+        // Add SKU to metadata
+        if let Some(sku) = product_data.get("sku").and_then(|s| s.as_str()) {
+            metadata.insert("sku".to_string(), sku.to_string());
+        }
+
+        Some(Product {
+            name,
+            description,
+            url,
+            image_url,
+            price,
+            store: Store::LeroyMerlin,
+            metadata: Some(metadata),
+        })
+    }
+
+    fn parse_product(&self, product_data: &Value) -> Option<Product> {
+        let name = product_data.get("name")?.as_str()?.to_string();
+        
+        // Extract price
+        let price = product_data
+            .get("offer")
+            .and_then(|o| o.get("price"))
+            .and_then(|p| p.as_f64())
+            .map(|amount| ProductPrice {
+                amount,
+                currency: "EUR".to_string(),
+            });
+
+        // Build URL
+        let url = product_data
+            .get("url")
+            .and_then(|u| u.as_str())
+            .map(|u| if u.starts_with("http") { u.to_string() } else { format!("{}{}", self.base_url, u) })?;
+
+        // Build image URL
+        let image_url = product_data
+            .get("sku")
+            .and_then(|s| s.as_str())
+            .map(|sku| format!("{}{}/media.jpg", BASE_IMAGE_URL, sku));
+
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "leroymerlin".to_string());
+        
+        // Add original price to metadata if available
+        if let Some(original_price) = product_data.get("displayed_price") {
+            if let Some(price_str) = original_price.as_str() {
+                metadata.insert("original_price".to_string(), price_str.to_string());
             }
-        } else {
-            let sku = product_data
-                .get("sku")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| crate::error::AppError::BadRequest("Missing product SKU".into()))?;
-            format!("{}{}/media.jpg", self.config.base_url, sku)
-        };
+        }
 
-        Ok((name, url, price, original_price, image_url))
+        Some(Product {
+            name,
+            description: None,
+            url,
+            image_url,
+            price,
+            store: Store::LeroyMerlin,
+            metadata: Some(metadata),
+        })
+    }
+
+    async fn scrape_url(&self, url: &str) -> AppResult<String> {
+        let html = self.client.get_rendered_html(url).await?;
+        Ok(html)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[async_trait]
+impl ScraperService for LeroyScraper {
+    async fn get_product_details(&self, url: &str) -> AppResult<Product> {
+        info!("Getting product details from URL: {}", url);
+        
+        let html = self.scrape_url(url).await?;
+        
+        // Try to extract product data from LD+JSON
+        if let Some(product_data) = self.extract_product_from_html(&html) {
+            if let Some(product) = self.parse_product_details(&product_data) {
+                return Ok(product);
+            }
+        }
+        
+        Err(AppError::BadRequest("Product data not found".into()))
+    }
 
-    #[tokio::test]
-    async fn test_leroy_scraper() {
-        let client = ZyteClient::new().unwrap();
-        let scraper = LeroyScraper::new(client).unwrap();
+    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
+        let url = format!("{}/search?q={}", self.base_url, urlencoding::encode(query));
+        info!("Searching Leroy Merlin with URL: {}", url);
+
+        let html = self.scrape_url(&url).await?;
+        let raw_products = self.extract_products_from_html(&html);
         
-        let products = scraper.scrape("martillo", 5).await.unwrap();
-        assert!(!products.is_empty());
+        info!("Found {} raw products from Leroy Merlin", raw_products.len());
         
-        let first_product = &products[0];
-        assert!(!first_product.name.is_empty());
-        assert!(first_product.url.starts_with(&scraper.config.base_url));
-        assert!(first_product.price.is_some());
-        assert!(first_product.image_url.is_some());
+        let products: Vec<Product> = raw_products
+            .iter()
+            .filter_map(|product_data| self.parse_product(product_data))
+            .collect();
+
+        info!("Successfully parsed {} products from Leroy Merlin", products.len());
+        Ok(products)
+    }
+
+    async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>> {
+        if store != Store::LeroyMerlin {
+            return Err(AppError::BadRequest("Invalid store for this scraper".into()));
+        }
+        self.search_products(query).await
     }
 }

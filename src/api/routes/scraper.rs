@@ -1,74 +1,89 @@
-use actix_web::{
-    web::{self, Data, Json, Path},
-    HttpResponse,
-};
+use std::sync::Arc;
+use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 
 use crate::{
     error::AppResult,
+    models::{product::Product, store::Store},
     services::{
-        queue::{QueueService, RabbitMQQueue},
+        cache::CacheService,
+        queue::QueueService,
         scraper::ScraperService,
     },
 };
 
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 pub struct SearchRequest {
-    pub query: String,
+    query: String,
+    store: Option<Store>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct SearchResponse {
-    pub task_id: String,
+    task_id: String,
 }
 
-pub fn config(cfg: &mut web::ServiceConfig) {
-    cfg.service(
-        web::scope("/scraper")
-            .route("", web::post().to(search_products))
-            .route("/tasks/{task_id}", web::get().to(get_task_status))
-            .route("/tasks/{task_id}", web::delete().to(cancel_task))
-            .route("/results/{task_id}", web::get().to(get_task_results)),
-    );
+#[derive(Debug, Serialize)]
+pub struct TaskStatusResponse {
+    status: String,
+    products: Option<Vec<Product>>,
+    error: Option<String>,
 }
 
-async fn search_products(
-    request: Json<SearchRequest>,
-    queue: Data<RabbitMQQueue>,
-    scraper: Data<dyn ScraperService>,
-) -> AppResult<HttpResponse> {
-    let task_id = queue.get_ref().create_task(&request.query).await?;
+#[post("/search")]
+pub async fn search_products(
+    request: web::Json<SearchRequest>,
+    scraper_service: web::Data<Arc<dyn ScraperService>>,
+) -> AppResult<impl Responder> {
+    let products = match request.store {
+        Some(store) => {
+            scraper_service.search_store_products(store, &request.query).await?
+        }
+        None => {
+            scraper_service.search_products(&request.query).await?
+        }
+    };
     
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "task_id": task_id,
-        "message": "Search request accepted"
-    })))
+    Ok(HttpResponse::Ok().json(products))
 }
 
-async fn get_task_status(
-    task_id: Path<String>,
-    queue: Data<RabbitMQQueue>,
-) -> AppResult<HttpResponse> {
-    let tasks = queue.get_ref().get_pending_tasks(1).await?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "status": if tasks.is_empty() { "completed" } else { "pending" }
-    })))
+#[get("/product")]
+pub async fn get_product_details(
+    url: web::Query<String>,
+    scraper_service: web::Data<Arc<dyn ScraperService>>,
+) -> AppResult<impl Responder> {
+    let product = scraper_service.get_product_details(&url).await?;
+    Ok(HttpResponse::Ok().json(product))
 }
 
-async fn get_task_results(
-    _task_id: Path<String>,
-    queue: Data<RabbitMQQueue>,
-) -> AppResult<HttpResponse> {
-    let tasks = queue.get_ref().get_pending_tasks(1).await?;
-    Ok(HttpResponse::Ok().json(serde_json::json!({
-        "results": tasks
-    })))
-}
-
-async fn cancel_task(
-    task_id: Path<String>,
-    queue: Data<RabbitMQQueue>,
-) -> AppResult<HttpResponse> {
-    queue.get_ref().mark_task_failed(&task_id).await?;
-    Ok(HttpResponse::Ok().finish())
+#[get("/task/{task_id}")]
+pub async fn get_task_status(
+    task_id: web::Path<String>,
+    queue_service: web::Data<Arc<dyn QueueService>>,
+    cache_service: web::Data<Arc<dyn CacheService>>,
+) -> AppResult<impl Responder> {
+    let task = queue_service.get_task(&task_id).await?;
+    
+    let response = match task.status.as_str() {
+        "completed" => {
+            let products = cache_service.get_search_results(&task.query).await?;
+            TaskStatusResponse {
+                status: task.status,
+                products,
+                error: None,
+            }
+        }
+        "failed" => TaskStatusResponse {
+            status: task.status,
+            products: None,
+            error: task.error,
+        },
+        _ => TaskStatusResponse {
+            status: task.status,
+            products: None,
+            error: None,
+        },
+    };
+    
+    Ok(HttpResponse::Ok().json(response))
 } 

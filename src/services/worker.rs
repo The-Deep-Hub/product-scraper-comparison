@@ -1,80 +1,54 @@
-use std::{sync::Arc, time::Duration};
-use tokio::time::sleep;
-use tracing::error;
+use std::sync::Arc;
+use tokio::time::{sleep, Duration};
+use tracing::{error, info};
 
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     services::{
-        queue::{QueueService, RabbitMQQueue},
+        queue::QueueService,
         scraper::ScraperService,
     },
 };
 
-impl From<tokio::task::JoinError> for AppError {
-    fn from(err: tokio::task::JoinError) -> Self {
-        AppError::InternalServerError(format!("Task join error: {}", err))
-    }
-}
-
-#[derive(Clone)]
 pub struct WorkerService {
-    queue: RabbitMQQueue,
-    scraper: Arc<dyn ScraperService>,
-    poll_interval: Duration,
-    max_concurrent_jobs: usize,
+    queue_service: Arc<dyn QueueService>,
+    scraper_service: Arc<dyn ScraperService>,
 }
 
 impl WorkerService {
     pub fn new(
-        queue: RabbitMQQueue,
-        scraper: Arc<dyn ScraperService>,
-        poll_interval: Duration,
-        max_concurrent_jobs: usize,
+        queue_service: Arc<dyn QueueService>,
+        scraper_service: Arc<dyn ScraperService>,
     ) -> Self {
         Self {
-            queue,
-            scraper,
-            poll_interval,
-            max_concurrent_jobs,
+            queue_service,
+            scraper_service,
         }
     }
 
-    pub async fn start(&self) -> AppResult<()> {
+    pub async fn run(&self) -> AppResult<()> {
+        info!("Starting worker service...");
+        
         loop {
-            let tasks = self.queue.get_pending_tasks(self.max_concurrent_jobs).await?;
-            
-            if tasks.is_empty() {
-                sleep(self.poll_interval).await;
-                continue;
-            }
-
-            for task in tasks {
-                let scraper = Arc::clone(&self.scraper);
-                let queue = self.queue.clone();
+            // Get pending tasks from queue
+            if let Some(task) = self.queue_service.get_pending_task().await? {
+                info!("Processing task: {}", task.id);
                 
-                let handle = tokio::spawn(async move {
-                    match scraper.get_product_details(&task.url).await {
-                        Ok(_) => {
-                            if let Err(e) = queue.mark_task_completed(&task.id).await {
-                                error!("Failed to mark task as completed: {}", e);
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to process task {}: {}", task.id, e);
-                            if let Err(e) = queue.mark_task_failed(&task.id).await {
-                                error!("Failed to mark task as failed: {}", e);
-                            }
-                        }
+                // Process the task
+                match self.scraper_service.search_products(&task.query).await {
+                    Ok(products) => {
+                        info!("Found {} products for query: {}", products.len(), task.query);
+                        self.queue_service.mark_task_completed(task.id).await?;
                     }
-                });
-
-                handle.await.map_err(|e| {
-                    error!("Task panicked: {}", e);
-                    e
-                })?;
+                    Err(e) => {
+                        error!("Failed to process task {}: {}", task.id, e);
+                        self.queue_service.mark_task_failed(task.id, e.to_string()).await?;
+                    }
+                }
             }
-
-            sleep(self.poll_interval).await;
+            
+            // Sleep for a short duration before checking for new tasks
+            sleep(Duration::from_secs(1)).await;
         }
     }
 } 

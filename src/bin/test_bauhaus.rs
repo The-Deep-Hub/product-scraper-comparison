@@ -1,7 +1,9 @@
 use rust_scraper::{
     clients::zyte::ZyteClient,
     scrapers::BauhausScraper,
+    services::scraper::ScraperService,
 };
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -17,17 +19,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ZyteClient::new()?;
     
     // Create Bauhaus scraper
-    let scraper = BauhausScraper::new(client)
-        .ok_or_else(|| "Failed to initialize Bauhaus scraper")?;
+    let scraper = BauhausScraper::new(client);
 
     // Test search query
     let query = "martillo";
-    let num_products = 5;
-
-    println!("Searching for '{}', fetching {} products...", query, num_products);
+    info!("Searching for '{}'...", query);
 
     // Perform scraping
-    match scraper.scrape(query, num_products).await {
+    match scraper.search_products(query).await {
         Ok(products) => {
             println!("\nFound {} products:", products.len());
             for (i, product) in products.iter().enumerate() {

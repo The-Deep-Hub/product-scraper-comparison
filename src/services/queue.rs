@@ -1,137 +1,120 @@
 use async_trait::async_trait;
-use futures_util::StreamExt;
-use lapin::{
-    options::{BasicPublishOptions, BasicConsumeOptions, QueueDeclareOptions},
-    types::FieldTable,
-    BasicProperties, Channel, Connection, ConnectionProperties,
-};
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
-use uuid::Uuid;
+use lapin::{
+    options::*, types::FieldTable, BasicProperties,
+    Connection, ConnectionProperties, Channel,
+};
+use tracing::{info, error};
 
-use crate::error::AppResult;
-
-const QUEUE_NAME: &str = "product_details";
+use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
-    pub url: String,
-    pub status: TaskStatus,
-    pub created_at: SystemTime,
-    pub updated_at: SystemTime,
+    pub query: String,
+    pub status: String,
+    pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub enum TaskStatus {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-}
-
-#[async_trait::async_trait]
+#[async_trait]
 pub trait QueueService: Send + Sync {
-    async fn create_task(&self, query: &str) -> AppResult<String>;
-    async fn get_pending_tasks(&self, limit: usize) -> AppResult<Vec<Task>>;
-    async fn mark_task_completed(&self, task_id: &str) -> AppResult<()>;
-    async fn mark_task_failed(&self, task_id: &str) -> AppResult<()>;
+    async fn create_task(&self, query: String) -> AppResult<String>;
+    async fn get_task(&self, task_id: &str) -> AppResult<Task>;
+    async fn get_pending_task(&self) -> AppResult<Option<Task>>;
+    async fn mark_task_completed(&self, task_id: String) -> AppResult<()>;
+    async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()>;
 }
 
-#[derive(Clone)]
 pub struct RabbitMQQueue {
+    connection: Connection,
     channel: Channel,
+    queue_name: String,
 }
 
 impl RabbitMQQueue {
     pub async fn new() -> AppResult<Self> {
-        let rabbitmq_uri = format!(
-            "amqp://{}:{}@{}:{}{}",
-            std::env::var("RABBITMQ_USER").expect("RABBITMQ_USER must be set"),
-            std::env::var("RABBITMQ_PASSWORD").expect("RABBITMQ_PASSWORD must be set"),
-            std::env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            std::env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
-            std::env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string())
-        );
-
-        let conn = Connection::connect(
-            &rabbitmq_uri,
-            ConnectionProperties::default(),
+        let addr = std::env::var("AMQP_ADDR")
+            .unwrap_or_else(|_| "amqp://guest:guest@localhost:5672".to_string());
+        
+        info!("Connecting to RabbitMQ at: {}", addr);
+        let connection = Connection::connect(
+            &addr,
+            ConnectionProperties::default()
+                .with_connection_name("scraper-service".into()),
         ).await?;
-
-        let channel = conn.create_channel().await?;
-
-        // Declare the queue
-        channel
-            .queue_declare(
-                QUEUE_NAME,
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        Ok(Self { channel })
+        
+        let channel = connection.create_channel().await?;
+        let queue_name = "scraper_tasks".to_string();
+        
+        channel.queue_declare(
+            &queue_name,
+            QueueDeclareOptions::default(),
+            FieldTable::default(),
+        ).await?;
+        
+        Ok(Self {
+            connection,
+            channel,
+            queue_name,
+        })
     }
 }
 
 #[async_trait]
 impl QueueService for RabbitMQQueue {
-    async fn create_task(&self, query: &str) -> AppResult<String> {
+    async fn create_task(&self, query: String) -> AppResult<String> {
         let task_id = uuid::Uuid::new_v4().to_string();
         let task = Task {
             id: task_id.clone(),
-            url: query.to_string(),
-            status: TaskStatus::Pending,
-            created_at: std::time::SystemTime::now(),
-            updated_at: std::time::SystemTime::now(),
+            query,
+            status: "pending".to_string(),
+            error: None,
         };
-
+        
         let payload = serde_json::to_vec(&task)?;
-        self.channel
-            .basic_publish(
-                "",
-                QUEUE_NAME,
-                BasicPublishOptions::default(),
-                &payload,
-                BasicProperties::default(),
-            )
-            .await?;
-
+        
+        self.channel.basic_publish(
+            "",
+            &self.queue_name,
+            BasicPublishOptions::default(),
+            &payload,
+            BasicProperties::default(),
+        ).await?;
+        
+        info!("Created task: {}", task_id);
         Ok(task_id)
     }
-
-    async fn get_pending_tasks(&self, limit: usize) -> AppResult<Vec<Task>> {
-        let mut tasks = Vec::new();
-        let mut consumer = self.channel
-            .basic_consume(
-                QUEUE_NAME,
-                "",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        while let Some(delivery) = consumer.next().await {
-            if tasks.len() >= limit {
-                break;
-            }
-
-            let delivery = delivery?;
-            let task: Task = serde_json::from_slice(&delivery.data)?;
-            tasks.push(task);
-            delivery.ack(Default::default()).await?;
-        }
-
-        Ok(tasks)
+    
+    async fn get_task(&self, _task_id: &str) -> AppResult<Task> {
+        // This is a placeholder - implement actual task retrieval from a persistent store
+        Err(AppError::BadRequest("Task retrieval not implemented".into()))
     }
-
-    async fn mark_task_completed(&self, _task_id: &str) -> AppResult<()> {
-        // In a real implementation, you would update the task status in a database
+    
+    async fn get_pending_task(&self) -> AppResult<Option<Task>> {
+        if let Some(delivery) = self.channel.basic_get(
+            &self.queue_name,
+            BasicGetOptions::default(),
+        ).await? {
+            let task: Task = serde_json::from_slice(&delivery.data)?;
+            self.channel.basic_ack(
+                delivery.delivery_tag,
+                BasicAckOptions::default(),
+            ).await?;
+            Ok(Some(task))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    async fn mark_task_completed(&self, task_id: String) -> AppResult<()> {
+        // This is a placeholder - implement actual task status update in a persistent store
+        info!("Task completed: {}", task_id);
         Ok(())
     }
-
-    async fn mark_task_failed(&self, _task_id: &str) -> AppResult<()> {
-        // In a real implementation, you would update the task status in a database
+    
+    async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()> {
+        // This is a placeholder - implement actual task status update in a persistent store
+        error!("Task failed: {} - {}", task_id, error);
         Ok(())
     }
 } 
