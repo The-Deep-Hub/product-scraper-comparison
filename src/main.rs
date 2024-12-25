@@ -8,9 +8,9 @@ use crate::{
     clients::zyte::ZyteClient,
     scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
     services::{
-        cache::RedisCacheService,
-        queue::RabbitMQQueue,
-        scraper::CombinedScraperService,
+        cache::{RedisCacheService, CacheService},
+        queue::{RabbitMQQueue, QueueService},
+        scraper::{CombinedScraperService, ScraperService},
         worker::WorkerService,
     },
 };
@@ -33,27 +33,28 @@ async fn main() -> std::io::Result<()> {
     // Initialize services
     let zyte_client = ZyteClient::new().expect("Failed to create Zyte client");
     
-    let cache_service = Arc::new(RedisCacheService::new().await.expect("Failed to create Redis cache service"));
+    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    let cache_service = Arc::new(RedisCacheService::new(&redis_url).await.expect("Failed to create Redis cache service"));
     let queue_service = Arc::new(RabbitMQQueue::new().await.expect("Failed to create RabbitMQ queue service"));
     
     // Initialize scrapers
-    let leroy_scraper = LeroyScraper::new(zyte_client.clone()).expect("Failed to create Leroy scraper");
-    let bauhaus_scraper = BauhausScraper::new(zyte_client.clone()).expect("Failed to create Bauhaus scraper");
-    let bricodepot_scraper = BricodepotScraper::new(zyte_client).expect("Failed to create Bricodepot scraper");
+    let leroy_scraper = LeroyScraper::new(zyte_client.clone());
+    let bauhaus_scraper = BauhausScraper::new(zyte_client.clone());
+    let bricodepot_scraper = BricodepotScraper::new(zyte_client);
     
     // Create combined scraper service
     let scraper_service = Arc::new(CombinedScraperService::new(
         leroy_scraper,
         bauhaus_scraper,
         bricodepot_scraper,
-        Box::new(RedisCacheService::new().await.expect("Failed to create Redis cache service")),
+        Box::new(RedisCacheService::new(&redis_url).await.expect("Failed to create Redis cache service")),
         Box::new(RabbitMQQueue::new().await.expect("Failed to create RabbitMQ queue service")),
     ));
     
     // Create worker service
     let worker_service = WorkerService::new(
-        Arc::clone(&queue_service),
-        Arc::clone(&scraper_service),
+        Arc::clone(&queue_service) as Arc<dyn QueueService>,
+        scraper_service.clone() as Arc<dyn ScraperService>,
     );
     
     // Start worker service in background
@@ -71,13 +72,19 @@ async fn main() -> std::io::Result<()> {
             .wrap(Logger)
             .wrap(middleware::Compress::default())
             .wrap(middleware::NormalizePath::trim())
-            .app_data(web::Data::new(Arc::clone(&scraper_service)))
-            .app_data(web::Data::new(Arc::clone(&cache_service)))
-            .app_data(web::Data::new(Arc::clone(&queue_service)))
-            .service(routes::health::healthcheck)
-            .service(routes::scraper::search_products)
-            .service(routes::scraper::get_product_details)
-            .service(routes::scraper::get_task_status)
+            .app_data(web::Data::new(scraper_service.clone() as Arc<dyn ScraperService>))
+            .app_data(web::Data::new(cache_service.clone() as Arc<dyn CacheService>))
+            .app_data(web::Data::new(queue_service.clone() as Arc<dyn QueueService>))
+            .service(
+                web::scope("/api")
+                    .service(routes::health::healthcheck)
+                    .service(
+                        web::scope("/scraper")
+                            .service(routes::scraper::search_products)
+                            .service(routes::scraper::get_product_details)
+                            .service(routes::scraper::get_task_status)
+                    )
+            )
     })
     .bind("0.0.0.0:8080")?
     .run()

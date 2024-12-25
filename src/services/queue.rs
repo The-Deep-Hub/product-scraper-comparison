@@ -101,13 +101,13 @@ impl RabbitMQQueue {
         ).await?;
 
         // Initialize Redis connection
-        let redis_url = format!(
-            "redis://{}:{}@{}:{}/",
-            std::env::var("REDIS_USER").unwrap_or_else(|_| "default".to_string()),
-            std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set"),
-            std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string()),
-        );
+        let redis_url = if let Ok(password) = std::env::var("REDIS_PASSWORD") {
+            format!("redis://:{}@localhost:6379", password)
+        } else {
+            "redis://localhost:6379".to_string()
+        };
+        
+        info!("Connecting to Redis at: {}", redis_url.replace(|c| c != '@' && c != ':', "*"));
         let redis_client = redis::Client::open(redis_url)?;
         let redis = ConnectionManager::new(redis_client).await?;
         

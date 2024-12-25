@@ -1,11 +1,13 @@
 use rust_scraper::{
     clients::zyte::ZyteClient,
     scrapers::BricodepotScraper,
+    services::scraper::ScraperService,
 };
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging with more detailed output
+    // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter("rust_scraper=debug,test_bricodepot=debug")
         .init();
@@ -13,47 +15,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Load environment variables
     dotenv::dotenv().ok();
 
-    // Create Zyte client
+    // Initialize Zyte client
     let client = ZyteClient::new()?;
-    
-    // Create Bricodepot scraper
-    let scraper = BricodepotScraper::new(client)
-        .ok_or_else(|| "Failed to initialize Bricodepot scraper")?;
 
-    // Test search query
-    let query = "martillo";
-    let num_products = 5;
+    // Initialize scraper
+    let scraper = BricodepotScraper::new(client);
 
-    println!("Searching for '{}', fetching {} products...", query, num_products);
+    // Test search
+    let query = "taladro";
+    info!("Searching for: {}", query);
+    let products = scraper.search_products(query).await?;
+    info!("Found {} products", products.len());
 
-    // Perform scraping
-    match scraper.scrape(query, num_products).await {
-        Ok(products) => {
-            println!("\nFound {} products:", products.len());
-            for (i, product) in products.iter().enumerate() {
-                println!("\nProduct {}:", i + 1);
-                println!("Name: {}", product.name);
-                println!("URL: {}", product.url);
-                if let Some(price) = &product.price {
-                    println!("Price: {} {}", price.amount, price.currency);
-                }
-                if let Some(desc) = &product.description {
-                    println!("Description: {}", desc);
-                }
-                if let Some(img) = &product.image_url {
-                    println!("Image URL: {}", img);
-                }
-                if let Some(metadata) = &product.metadata {
-                    println!("\nMetadata:");
-                    for (key, value) in metadata {
-                        println!("  {}: {}", key, value);
-                    }
-                }
-            }
-        }
-        Err(e) => {
-            eprintln!("Error during scraping: {}", e);
-        }
+    for product in products {
+        println!("{:#?}", product);
     }
 
     Ok(())
