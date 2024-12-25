@@ -7,7 +7,7 @@ use crate::{
     models::{product::Product, store::Store},
     services::{
         cache::CacheService,
-        queue::QueueService,
+        queue::{QueueService, TaskStatus},
         scraper::ScraperService,
     },
 };
@@ -53,11 +53,51 @@ pub async fn search_products(
         }
     }
     
-    // If not in cache, create a task
+    // If not in cache, create and wait for task
     match queue_service.create_task(request.query.clone()).await {
         Ok(task_id) => {
             tracing::info!("Created task {} for query: {}", task_id, request.query);
-            Ok(HttpResponse::Accepted().json(SearchResponse { task_id }))
+            
+            // Wait for task completion with timeout
+            let mut attempts = 0;
+            const MAX_ATTEMPTS: u32 = 30; // 30 seconds timeout
+            
+            while attempts < MAX_ATTEMPTS {
+                match queue_service.get_task(&task_id).await {
+                    Ok(task) => match task.status {
+                        TaskStatus::Completed => {
+                            // Task completed, get results from cache
+                            match cache_service.get_search_results(&request.query).await {
+                                Ok(Some(products)) => {
+                                    return Ok(HttpResponse::Ok().json(products));
+                                }
+                                _ => {
+                                    return Err(AppError::InternalServerError(
+                                        "Task completed but results not found in cache".to_string()
+                                    ));
+                                }
+                            }
+                        }
+                        TaskStatus::Failed => {
+                            return Err(AppError::InternalServerError(
+                                task.error.unwrap_or_else(|| "Task failed".to_string())
+                            ));
+                        }
+                        _ => {
+                            // Task still processing, wait and retry
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            attempts += 1;
+                            continue;
+                        }
+                    },
+                    Err(e) => {
+                        return Err(AppError::InternalServerError(format!("Failed to check task status: {}", e)));
+                    }
+                }
+            }
+            
+            // Timeout reached
+            Err(AppError::InternalServerError("Task processing timeout".to_string()))
         }
         Err(e) => {
             tracing::error!("Failed to create task: {}", e);
@@ -94,8 +134,8 @@ pub async fn get_task_status(
 ) -> AppResult<impl Responder> {
     let task = queue_service.get_task(&task_id).await?;
     
-    let response = match task.status.as_str() {
-        "completed" => {
+    let response = match task.status {
+        TaskStatus::Completed => {
             let products = cache_service.get_search_results(&task.query).await?;
             TaskStatusResponse {
                 status: task.status.to_string(),
@@ -103,7 +143,7 @@ pub async fn get_task_status(
                 error: None,
             }
         }
-        "failed" => TaskStatusResponse {
+        TaskStatus::Failed => TaskStatusResponse {
             status: task.status.to_string(),
             products: None,
             error: task.error,
