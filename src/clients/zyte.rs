@@ -3,33 +3,33 @@ use std::collections::HashMap;
 use reqwest::Client;
 use serde_json::{json, Value};
 use tracing::{info, error};
+use std::sync::Arc;
 
 use crate::{
-    error::AppResult,
+    error::{AppError, AppResult},
     models::{
         product::{Product, ProductPrice},
-        Store,
+        store::Store,
     },
     services::scraper::ScraperService,
 };
 
+const ZYTE_API_URL: &str = "https://api.zyte.com/v1/extract";
+
+#[derive(Clone)]
 pub struct ZyteClient {
     client: Client,
-    api_key: String,
-    api_url: String,
+    api_key: Arc<String>,
 }
 
 impl ZyteClient {
     pub fn new() -> AppResult<Self> {
-        let api_key = std::env::var("ZYTE_API_KEY").expect("ZYTE_API_KEY must be set");
-        let client = Client::builder()
-            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-            .build()?;
+        let api_key = std::env::var("ZYTE_API_KEY")
+            .map_err(|_| AppError::BadRequest("ZYTE_API_KEY not set".into()))?;
 
-        Ok(Self { 
-            client,
-            api_key,
-            api_url: "https://api.zyte.com/v1/extract".to_string(),
+        Ok(Self {
+            client: Client::new(),
+            api_key: Arc::new(api_key),
         })
     }
 
@@ -42,8 +42,8 @@ impl ZyteClient {
         });
 
         let response = self.client
-            .post(&self.api_url)
-            .basic_auth(&self.api_key, Some(""))
+            .post(ZYTE_API_URL)
+            .basic_auth(self.api_key.as_str(), Some(""))
             .json(&payload)
             .send()
             .await?;
@@ -54,7 +54,7 @@ impl ZyteClient {
                 response.status()
             );
             error!("{}", error_msg);
-            return Err(crate::error::AppError::BadRequest(error_msg));
+            return Err(AppError::BadRequest(error_msg));
         }
 
         let json_response = response.json::<Value>().await?;
@@ -63,7 +63,7 @@ impl ZyteClient {
             .ok_or_else(|| {
                 let msg = "Rendered HTML is missing in Zyte API response.";
                 error!("{}", msg);
-                crate::error::AppError::BadRequest(msg.into())
+                AppError::BadRequest(msg.into())
             })?;
 
         Ok(rendered_html.to_string())
@@ -83,8 +83,8 @@ impl ZyteClient {
         }
 
         let response = self.client
-            .post(&self.api_url)
-            .basic_auth(&self.api_key, Some(""))
+            .post(ZYTE_API_URL)
+            .basic_auth(self.api_key.as_str(), Some(""))
             .json(&payload)
             .send()
             .await?;
@@ -95,7 +95,7 @@ impl ZyteClient {
                 response.status()
             );
             error!("{}", error_msg);
-            return Err(crate::error::AppError::BadRequest(error_msg));
+            return Err(AppError::BadRequest(error_msg));
         }
 
         Ok(response.json().await?)
@@ -110,7 +110,7 @@ impl ZyteClient {
 
         // Extract product details from response
         let product_data = response.get("product").ok_or_else(|| {
-            crate::error::AppError::BadRequest("Failed to extract product data".into())
+            AppError::BadRequest("Failed to extract product data".into())
         })?;
 
         // Convert price data to ProductPrice
@@ -147,14 +147,19 @@ impl ZyteClient {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string()),
             price,
-            store: Store::LeroyMerlin,
+            store: Store::from_url(url)?,
             metadata: Some(metadata),
         })
     }
 
-    pub async fn scrape_search(&self, url: &str) -> AppResult<Value> {
-        let html = self.get_rendered_html(url).await?;
-        Ok(json!({ "browserHtml": html }))
+    pub async fn scrape_search(&self, url: &str) -> AppResult<Vec<Product>> {
+        let _html = self.get_rendered_html(url).await?;
+        let products = Vec::new();
+        
+        // Parse HTML and extract product links
+        // This is a placeholder - implement actual parsing logic
+        
+        Ok(products)
     }
 }
 
@@ -167,21 +172,16 @@ impl ScraperService for ZyteClient {
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
         // Construct search URL (you'll need to implement this based on your requirements)
         let search_url = format!("https://www.leroymerlin.es/search?q={}", query);
-        let search_results = self.scrape_search(&search_url).await?;
-        
-        // Parse the search results into products
-        // This is a placeholder - you'll need to implement the actual parsing logic
-        let mut products = Vec::new();
-        if let Some(items) = search_results.get("items").and_then(|v| v.as_array()) {
-            for item in items {
-                if let Some(url) = item.get("url").and_then(|v| v.as_str()) {
-                    if let Ok(product) = self.get_product_details(url).await {
-                        products.push(product);
-                    }
-                }
-            }
-        }
-        
-        Ok(products)
+        self.scrape_search(&search_url).await
+    }
+
+    async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>> {
+        let base_url = match store {
+            Store::LeroyMerlin => "https://www.leroymerlin.es",
+            Store::Bauhaus => "https://www.bauhaus.es",
+            Store::Bricodepot => "https://www.bricodepot.es",
+        };
+        let search_url = format!("{}/search?q={}", base_url, query);
+        self.scrape_search(&search_url).await
     }
 }

@@ -1,28 +1,18 @@
 use async_trait::async_trait;
-use futures_util::StreamExt;
-use lapin::{
-    options::{BasicPublishOptions, BasicConsumeOptions, QueueDeclareOptions},
-    types::FieldTable,
-    BasicProperties, Channel, Connection, ConnectionProperties,
-};
 use serde::{Deserialize, Serialize};
-use std::time::SystemTime;
-use uuid::Uuid;
+use lapin::{
+    options::*, types::FieldTable, BasicProperties,
+    Connection, ConnectionProperties, Channel,
+};
+use tracing::{info, error};
+use redis::{aio::ConnectionManager, AsyncCommands};
+use std::time::Duration;
+use std::fmt;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
-const QUEUE_NAME: &str = "product_details";
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Task {
-    pub id: String,
-    pub url: String,
-    pub status: TaskStatus,
-    pub created_at: SystemTime,
-    pub updated_at: SystemTime,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
     Pending,
     Processing,
@@ -30,108 +20,229 @@ pub enum TaskStatus {
     Failed,
 }
 
-#[async_trait::async_trait]
-pub trait QueueService: Send + Sync {
-    async fn create_task(&self, query: &str) -> AppResult<String>;
-    async fn get_pending_tasks(&self, limit: usize) -> AppResult<Vec<Task>>;
-    async fn mark_task_completed(&self, task_id: &str) -> AppResult<()>;
-    async fn mark_task_failed(&self, task_id: &str) -> AppResult<()>;
+impl fmt::Display for TaskStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TaskStatus::Pending => write!(f, "pending"),
+            TaskStatus::Processing => write!(f, "processing"),
+            TaskStatus::Completed => write!(f, "completed"),
+            TaskStatus::Failed => write!(f, "failed"),
+        }
+    }
 }
 
-#[derive(Clone)]
+impl TaskStatus {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            TaskStatus::Pending => "pending",
+            TaskStatus::Processing => "processing",
+            TaskStatus::Completed => "completed",
+            TaskStatus::Failed => "failed",
+        }
+    }
+
+    pub fn from_str(s: &str) -> Option<Self> {
+        match s {
+            "pending" => Some(TaskStatus::Pending),
+            "processing" => Some(TaskStatus::Processing),
+            "completed" => Some(TaskStatus::Completed),
+            "failed" => Some(TaskStatus::Failed),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Task {
+    pub id: String,
+    pub query: String,
+    pub status: TaskStatus,
+    pub error: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+#[async_trait]
+pub trait QueueService: Send + Sync {
+    async fn create_task(&self, query: String) -> AppResult<String>;
+    async fn get_task(&self, task_id: &str) -> AppResult<Task>;
+    async fn get_pending_task(&self) -> AppResult<Option<Task>>;
+    async fn mark_task_completed(&self, task_id: String) -> AppResult<()>;
+    async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()>;
+}
+
 pub struct RabbitMQQueue {
+    connection: Connection,
     channel: Channel,
+    queue_name: String,
+    redis: ConnectionManager,
 }
 
 impl RabbitMQQueue {
     pub async fn new() -> AppResult<Self> {
-        let rabbitmq_uri = format!(
-            "amqp://{}:{}@{}:{}{}",
-            std::env::var("RABBITMQ_USER").expect("RABBITMQ_USER must be set"),
-            std::env::var("RABBITMQ_PASSWORD").expect("RABBITMQ_PASSWORD must be set"),
-            std::env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            std::env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
-            std::env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string())
-        );
-
-        let conn = Connection::connect(
-            &rabbitmq_uri,
-            ConnectionProperties::default(),
+        // Initialize RabbitMQ connection
+        let addr = std::env::var("AMQP_ADDR")
+            .unwrap_or_else(|_| "amqp://guest:guest@localhost:5672".to_string());
+        
+        info!("Connecting to RabbitMQ at: {}", addr);
+        let connection = Connection::connect(
+            &addr,
+            ConnectionProperties::default()
+                .with_connection_name("scraper-service".into()),
+        ).await?;
+        
+        let channel = connection.create_channel().await?;
+        let queue_name = "scraper_tasks".to_string();
+        
+        channel.queue_declare(
+            &queue_name,
+            QueueDeclareOptions::default(),
+            FieldTable::default(),
         ).await?;
 
-        let channel = conn.create_channel().await?;
+        // Initialize Redis connection
+        let redis_url = if let Ok(password) = std::env::var("REDIS_PASSWORD") {
+            format!("redis://:{}@localhost:6379", password)
+        } else {
+            "redis://localhost:6379".to_string()
+        };
+        
+        info!("Connecting to Redis at: {}", redis_url.replace(|c| c != '@' && c != ':', "*"));
+        let redis_client = redis::Client::open(redis_url)?;
+        let redis = ConnectionManager::new(redis_client).await?;
+        
+        Ok(Self {
+            connection,
+            channel,
+            queue_name,
+            redis,
+        })
+    }
 
-        // Declare the queue
-        channel
-            .queue_declare(
-                QUEUE_NAME,
-                QueueDeclareOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        Ok(Self { channel })
+    fn get_task_key(task_id: &str) -> String {
+        format!("task:{}", task_id)
     }
 }
 
 #[async_trait]
 impl QueueService for RabbitMQQueue {
-    async fn create_task(&self, query: &str) -> AppResult<String> {
+    async fn create_task(&self, query: String) -> AppResult<String> {
         let task_id = uuid::Uuid::new_v4().to_string();
+        let now = chrono::Utc::now();
+        
         let task = Task {
             id: task_id.clone(),
-            url: query.to_string(),
+            query,
             status: TaskStatus::Pending,
-            created_at: std::time::SystemTime::now(),
-            updated_at: std::time::SystemTime::now(),
+            error: None,
+            created_at: now,
+            updated_at: now,
         };
-
+        
+        // Store task in Redis
+        let mut redis = self.redis.clone();
+        let task_key = Self::get_task_key(&task_id);
+        let task_json = serde_json::to_string(&task)?;
+        redis.set_ex(&task_key, task_json, 3600).await?; // 1 hour TTL
+        
+        // Publish task to RabbitMQ
         let payload = serde_json::to_vec(&task)?;
-        self.channel
-            .basic_publish(
-                "",
-                QUEUE_NAME,
-                BasicPublishOptions::default(),
-                &payload,
-                BasicProperties::default(),
-            )
-            .await?;
-
+        self.channel.basic_publish(
+            "",
+            &self.queue_name,
+            BasicPublishOptions::default(),
+            &payload,
+            BasicProperties::default(),
+        ).await?;
+        
+        info!("Created task: {}", task_id);
         Ok(task_id)
     }
-
-    async fn get_pending_tasks(&self, limit: usize) -> AppResult<Vec<Task>> {
-        let mut tasks = Vec::new();
-        let mut consumer = self.channel
-            .basic_consume(
-                QUEUE_NAME,
-                "",
-                BasicConsumeOptions::default(),
-                FieldTable::default(),
-            )
-            .await?;
-
-        while let Some(delivery) = consumer.next().await {
-            if tasks.len() >= limit {
-                break;
+    
+    async fn get_task(&self, task_id: &str) -> AppResult<Task> {
+        let mut redis = self.redis.clone();
+        let task_key = Self::get_task_key(task_id);
+        
+        let task_json: Option<String> = redis.get(&task_key).await?;
+        match task_json {
+            Some(json) => {
+                let task: Task = serde_json::from_str(&json)?;
+                Ok(task)
             }
-
-            let delivery = delivery?;
-            let task: Task = serde_json::from_slice(&delivery.data)?;
-            tasks.push(task);
-            delivery.ack(Default::default()).await?;
+            None => Err(AppError::NotFound(format!("Task {} not found", task_id)))
         }
-
-        Ok(tasks)
     }
-
-    async fn mark_task_completed(&self, _task_id: &str) -> AppResult<()> {
-        // In a real implementation, you would update the task status in a database
-        Ok(())
+    
+    async fn get_pending_task(&self) -> AppResult<Option<Task>> {
+        if let Some(delivery) = self.channel.basic_get(
+            &self.queue_name,
+            BasicGetOptions::default(),
+        ).await? {
+            let task: Task = serde_json::from_slice(&delivery.data)?;
+            
+            // Update task status to Processing
+            let mut updated_task = task.clone();
+            updated_task.status = TaskStatus::Processing;
+            updated_task.updated_at = chrono::Utc::now();
+            
+            let mut redis = self.redis.clone();
+            let task_key = Self::get_task_key(&task.id);
+            let task_json = serde_json::to_string(&updated_task)?;
+            redis.set_ex(&task_key, task_json, 3600).await?;
+            
+            self.channel.basic_ack(
+                delivery.delivery_tag,
+                BasicAckOptions::default(),
+            ).await?;
+            
+            Ok(Some(updated_task))
+        } else {
+            Ok(None)
+        }
     }
-
-    async fn mark_task_failed(&self, _task_id: &str) -> AppResult<()> {
-        // In a real implementation, you would update the task status in a database
-        Ok(())
+    
+    async fn mark_task_completed(&self, task_id: String) -> AppResult<()> {
+        let mut redis = self.redis.clone();
+        let task_key = Self::get_task_key(&task_id);
+        
+        // Get current task
+        let task_json: Option<String> = redis.get(&task_key).await?;
+        if let Some(json) = task_json {
+            let mut task: Task = serde_json::from_str(&json)?;
+            task.status = TaskStatus::Completed;
+            task.updated_at = chrono::Utc::now();
+            
+            // Update task in Redis
+            let updated_json = serde_json::to_string(&task)?;
+            redis.set_ex(&task_key, updated_json, 3600).await?;
+            
+            info!("Task completed: {}", task_id);
+            Ok(())
+        } else {
+            Err(AppError::NotFound(format!("Task {} not found", task_id)))
+        }
+    }
+    
+    async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()> {
+        let mut redis = self.redis.clone();
+        let task_key = Self::get_task_key(&task_id);
+        
+        // Get current task
+        let task_json: Option<String> = redis.get(&task_key).await?;
+        if let Some(json) = task_json {
+            let mut task: Task = serde_json::from_str(&json)?;
+            task.status = TaskStatus::Failed;
+            task.error = Some(error.clone());
+            task.updated_at = chrono::Utc::now();
+            
+            // Update task in Redis
+            let updated_json = serde_json::to_string(&task)?;
+            redis.set_ex(&task_key, updated_json, 3600).await?;
+            
+            error!("Task failed: {} - {}", task_id, error);
+            Ok(())
+        } else {
+            Err(AppError::NotFound(format!("Task {} not found", task_id)))
+        }
     }
 } 

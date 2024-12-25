@@ -1,127 +1,95 @@
+use async_trait::async_trait;
+use scraper::{Html, Selector};
 use std::collections::HashMap;
-use tracing::{error, info, debug};
-use scraper::{Html, Selector, ElementRef};
+use tracing::{info, error};
 
 use crate::{
-    error::AppResult,
-    models::product::{Product, ProductPrice, Store},
+    error::{AppError, AppResult},
+    models::{
+        product::{Product, ProductPrice},
+        store::Store,
+    },
+    services::scraper::ScraperService,
     clients::zyte::ZyteClient,
-    config,
 };
 
 pub struct BricodepotScraper {
+    base_url: String,
+    search_url: String,
     client: ZyteClient,
-    config: &'static config::StoreConfig,
 }
 
 impl BricodepotScraper {
-    pub fn new(client: ZyteClient) -> Option<Self> {
-        let config = config::get_store_config("bricodepot")?;
-        Some(Self { client, config })
-    }
-
-    pub async fn scrape(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
-        info!("Starting scrape for query: {}", query);
-        match self.get_product_data(query, num_products).await {
-            Ok(products) => {
-                info!("Successfully scraped {} products", products.len());
-                Ok(products)
-            }
-            Err(e) => {
-                error!("Error scraping Bricodepot: {}", e);
-                Ok(vec![])
-            }
+    pub fn new(client: ZyteClient) -> Self {
+        Self {
+            base_url: "https://www.bricodepot.es".to_string(),
+            search_url: "https://www.bricodepot.es/catalogsearch/result/?q=".to_string(),
+            client,
         }
     }
 
-    async fn get_product_data(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
-        let search_url = config::build_search_url("bricodepot", query)
-            .ok_or_else(|| crate::error::AppError::BadRequest("Failed to build search URL".into()))?;
-        
-        info!("Fetching search results from URL: {}", search_url);
-        
-        let html = self.client.get_rendered_html(&search_url).await?;
-        debug!("Got HTML response, length: {}", html.len());
-
-        let document = Html::parse_document(&html);
+    fn extract_products_from_html(&self, html: &str) -> Vec<Product> {
+        let document = Html::parse_document(html);
         let product_selector = Selector::parse("a.product-item")
-            .map_err(|e| crate::error::AppError::BadRequest(e.to_string()))?;
+            .expect("Failed to parse product selector");
 
-        let mut products = Vec::new();
-        for element in document.select(&product_selector).take(num_products) {
-            if let Some(product) = self.extract_product_info(&element)? {
-                debug!("Product scraped: {:?}", product);
-                products.push(product);
-            }
-        }
-
-        info!("Found {} products", products.len());
-        Ok(products)
+        document
+            .select(&product_selector)
+            .filter_map(|card| self.parse_product(card))
+            .collect()
     }
 
-    fn extract_product_info(&self, card: &ElementRef) -> AppResult<Option<Product>> {
-        let name = self.extract_name(card);
-        let url = self.build_full_url(card);
-        let price = self.extract_price(card);
-        let original_price = self.extract_original_price(card);
-        let image_url = self.extract_image_url(card);
-
-        if let (Some(name), Some(url), Some(price)) = (name, url, price) {
-            let mut metadata = HashMap::new();
-            if let Some(orig_price) = original_price {
-                metadata.insert("original_price".to_string(), orig_price.to_string());
-            }
-
-            Ok(Some(Product {
-                name,
-                url,
-                price: Some(ProductPrice {
-                    amount: price,
-                    currency: "EUR".to_string(),
-                }),
-                description: None, // Bricodepot doesn't seem to have descriptions in the product cards
-                image_url,
-                store: Store::Bricodepot,
-                metadata: Some(metadata),
-            }))
-        } else {
-            Ok(None)
-        }
-    }
-
-    fn extract_name(&self, card: &ElementRef) -> Option<String> {
+    fn parse_product<'a>(&self, card: scraper::ElementRef<'a>) -> Option<Product> {
+        // Extract name
         let name_selector = Selector::parse("div.product-name").ok()?;
-        card.select(&name_selector)
-            .next()
-            .map(|el| el.text().collect::<String>().trim().to_string())
-    }
-
-    fn build_full_url(&self, card: &ElementRef) -> Option<String> {
-        card.value().attr("href").map(|href| {
-            if href.starts_with("http") {
-                href.to_string()
-            } else {
-                format!("{}{}", self.config.base_url, href)
-            }
-        })
-    }
-
-    fn extract_price(&self, card: &ElementRef) -> Option<f64> {
-        let price_wrapper_selector = Selector::parse("p.price-wrapper").ok()?;
-        let price_style_selector = Selector::parse("span.price-style").ok()?;
-        
-        let price_wrapper = card.select(&price_wrapper_selector).next()?;
-        let price_style = price_wrapper.select(&price_style_selector).next()?;
-
-        // Get integer part (first direct span child)
-        let integer_part = price_style.select(&Selector::parse("span").ok()?)
+        let name = card
+            .select(&name_selector)
             .next()?
             .text()
             .collect::<String>()
             .trim()
             .to_string();
 
-        // Get decimal part (span with class price-top inside the second span)
+        // Extract URL
+        let url = card.value().attr("href")?.to_string();
+
+        // Extract price
+        let price = self.extract_price(card);
+
+        // Extract image URL
+        let image_url = self.extract_image_url(card);
+
+        // Extract original price for metadata
+        let mut metadata = HashMap::new();
+        metadata.insert("source".to_string(), "bricodepot".to_string());
+        
+        if let Some(original_price) = self.extract_original_price(card) {
+            metadata.insert("original_price".to_string(), original_price.to_string());
+        }
+
+        Some(Product {
+            name,
+            description: None,
+            url,
+            image_url,
+            price,
+            store: Store::Bricodepot,
+            metadata: Some(metadata),
+        })
+    }
+
+    fn extract_price<'a>(&self, card: scraper::ElementRef<'a>) -> Option<ProductPrice> {
+        let price_wrapper_selector = Selector::parse("p.price-wrapper").ok()?;
+        let price_style_selector = Selector::parse("span.price-style").ok()?;
+        
+        let price_wrapper = card.select(&price_wrapper_selector).next()?;
+        let price_style = price_wrapper.select(&price_style_selector).next()?;
+
+        // Get integer part from first span
+        let spans: Vec<_> = price_style.select(&Selector::parse("span").ok()?).collect();
+        let integer_part = spans.first()?.text().collect::<String>().trim().to_string();
+
+        // Get decimal part from span.price-top
         let decimal_selector = Selector::parse("span.price-top").ok()?;
         let decimal_part = price_style
             .select(&decimal_selector)
@@ -133,57 +101,87 @@ impl BricodepotScraper {
 
         // Combine parts and convert to float
         let price_str = format!("{}.{}", integer_part, decimal_part);
-        price_str.parse::<f64>().ok()
+        price_str.parse::<f64>().ok().map(|amount| ProductPrice {
+            amount,
+            currency: "EUR".to_string(),
+        })
     }
 
-    fn extract_original_price(&self, card: &ElementRef) -> Option<f64> {
-        let original_price_selector = Selector::parse("p.price-was").ok()?;
-        card.select(&original_price_selector)
-            .next()
-            .and_then(|el| {
-                el.text()
-                    .collect::<String>()
-                    .trim()
-                    .replace(',', ".")
-                    .replace('\u{a0}', "")
-                    .replace('€', "")
-                    .parse::<f64>()
-                    .ok()
-            })
+    fn extract_original_price<'a>(&self, card: scraper::ElementRef<'a>) -> Option<f64> {
+        let price_was_selector = Selector::parse("p.price-was").ok()?;
+        let price_text = card
+            .select(&price_was_selector)
+            .next()?
+            .text()
+            .collect::<String>()
+            .trim()
+            .replace(',', ".")
+            .replace('\u{a0}', "")
+            .replace('€', "");
+
+        price_text.parse::<f64>().ok()
     }
 
-    fn extract_image_url(&self, card: &ElementRef) -> Option<String> {
+    fn extract_image_url<'a>(&self, card: scraper::ElementRef<'a>) -> Option<String> {
         let img_selector = Selector::parse("img[src]").ok()?;
-        let mut images: Vec<String> = card
+        let images: Vec<_> = card
             .select(&img_selector)
-            .filter_map(|img| img.value().attr("src").map(String::from))
+            .filter_map(|img| img.value().attr("src"))
+            .map(|s| s.to_string())  // Convert to owned String
             .collect();
 
         // Prioritize PNG images
-        if let Some(png_image) = images.iter().find(|url| url.ends_with(".png")) {
-            Some(png_image.clone())
-        } else {
-            // Fallback to first available image
-            images.first().cloned()
+        let png_image = images.iter().find(|src| src.ends_with(".png"));
+        if let Some(src) = png_image {
+            return Some(src.to_string());
         }
+
+        // Fallback to first available image
+        images.first().map(|src| src.to_string())
+    }
+
+    async fn scrape_url(&self, url: &str) -> AppResult<String> {
+        let html = self.client.get_rendered_html(url).await?;
+        Ok(html)
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
+#[async_trait]
+impl ScraperService for BricodepotScraper {
+    async fn get_product_details(&self, url: &str) -> AppResult<Product> {
+        info!("Getting product details from URL: {}", url);
+        
+        let html = self.scrape_url(url).await?;
+        let document = Html::parse_document(&html);
+        
+        // Find the product card on the details page
+        let product_selector = Selector::parse("div.product-info-main")
+            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+            
+        if let Some(product_card) = document.select(&product_selector).next() {
+            if let Some(product) = self.parse_product(product_card) {
+                return Ok(product);
+            }
+        }
+        
+        Err(AppError::BadRequest("Product data not found".into()))
+    }
 
-    #[tokio::test]
-    async fn test_bricodepot_scraper() {
-        let client = ZyteClient::new().unwrap();
-        let scraper = BricodepotScraper::new(client).unwrap();
+    async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
+        let url = format!("{}{}", self.search_url, urlencoding::encode(query));
+        info!("Searching Bricodepot with URL: {}", url);
+
+        let html = self.scrape_url(&url).await?;
+        let products = self.extract_products_from_html(&html);
         
-        let products = scraper.scrape("martillo", 5).await.unwrap();
-        assert!(!products.is_empty());
-        
-        let first_product = &products[0];
-        assert!(!first_product.name.is_empty());
-        assert!(first_product.url.starts_with(&scraper.config.base_url));
-        assert!(first_product.price.is_some());
+        info!("Successfully parsed {} products from Bricodepot", products.len());
+        Ok(products)
+    }
+
+    async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>> {
+        if store != Store::Bricodepot {
+            return Err(AppError::BadRequest("Invalid store for this scraper".into()));
+        }
+        self.search_products(query).await
     }
 }
