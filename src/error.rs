@@ -1,84 +1,74 @@
-use actix_web::{error::ResponseError, http::StatusCode, HttpResponse};
-use serde::Serialize;
-use validator::ValidationErrors;
-use thiserror::Error;
+use actix_web::{HttpResponse, ResponseError};
+use derive_more::Display;
+use mongodb::error::Error as MongoError;
+use redis::RedisError;
+use lapin::Error as LapinError;
+use serde_json::Error as JsonError;
+use reqwest::Error as ReqwestError;
+use std::error::Error as StdError;
 
-#[derive(Debug, Error)]
+#[derive(Debug, Display)]
 pub enum AppError {
-    #[error("Not found: {0}")]
-    NotFound(String),
-    
-    #[error("Bad request: {0}")]
-    BadRequest(String),
-    
-    #[error("Internal server error: {0}")]
+    #[display(fmt = "Internal Server Error: {}", _0)]
     InternalServerError(String),
-    
-    #[error("Unauthorized: {0}")]
+    #[display(fmt = "Not Found: {}", _0)]
+    NotFound(String),
+    #[display(fmt = "Bad Request: {}", _0)]
+    BadRequest(String),
+    #[display(fmt = "Unauthorized: {}", _0)]
     Unauthorized(String),
-    
-    #[error("Validation error: {0}")]
-    ValidationError(#[from] ValidationErrors),
-    
-    #[error("User already exists")]
-    UserAlreadyExists,
-    
-    #[error("Task not found: {0}")]
-    TaskNotFound(String),
-    
-    #[error("MongoDB error: {0}")]
-    MongoError(#[from] mongodb::error::Error),
-    
-    #[error("Redis error: {0}")]
-    RedisError(#[from] redis::RedisError),
-    
-    #[error("RabbitMQ error: {0}")]
-    RabbitMQError(#[from] lapin::Error),
-    
-    #[error("HTTP client error: {0}")]
-    HttpClientError(#[from] reqwest::Error),
-    
-    #[error("JSON error: {0}")]
-    JsonError(#[from] serde_json::Error),
-    
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
+    #[display(fmt = "Cache Error: {}", _0)]
+    CacheError(String),
+    #[display(fmt = "Queue Error: {}", _0)]
+    QueueError(String),
+    #[display(fmt = "Scraper Error: {}", _0)]
+    ScraperError(String),
 }
 
-pub type AppResult<T> = Result<T, AppError>;
-
-#[derive(Debug, Serialize)]
-struct ErrorResponse {
-    code: u16,
-    message: String,
-}
+impl StdError for AppError {}
 
 impl ResponseError for AppError {
     fn error_response(&self) -> HttpResponse {
-        let status_code = self.status_code();
-        let response = ErrorResponse {
-            code: status_code.as_u16(),
-            message: self.to_string(),
-        };
-
-        HttpResponse::build(status_code).json(response)
-    }
-
-    fn status_code(&self) -> StatusCode {
         match self {
-            AppError::NotFound(_) => StatusCode::NOT_FOUND,
-            AppError::BadRequest(_) => StatusCode::BAD_REQUEST,
-            AppError::InternalServerError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
-            AppError::ValidationError(_) => StatusCode::BAD_REQUEST,
-            AppError::UserAlreadyExists => StatusCode::CONFLICT,
-            AppError::TaskNotFound(_) => StatusCode::NOT_FOUND,
-            AppError::MongoError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RedisError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::RabbitMQError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::HttpClientError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::JsonError(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::ConfigError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::InternalServerError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::NotFound(msg) => HttpResponse::NotFound().json(msg),
+            AppError::BadRequest(msg) => HttpResponse::BadRequest().json(msg),
+            AppError::Unauthorized(msg) => HttpResponse::Unauthorized().json(msg),
+            AppError::CacheError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::QueueError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::ScraperError(msg) => HttpResponse::InternalServerError().json(msg),
         }
     }
-} 
+}
+
+impl From<MongoError> for AppError {
+    fn from(error: MongoError) -> Self {
+        AppError::InternalServerError(error.to_string())
+    }
+}
+
+impl From<RedisError> for AppError {
+    fn from(error: RedisError) -> Self {
+        AppError::CacheError(error.to_string())
+    }
+}
+
+impl From<LapinError> for AppError {
+    fn from(error: LapinError) -> Self {
+        AppError::QueueError(error.to_string())
+    }
+}
+
+impl From<JsonError> for AppError {
+    fn from(error: JsonError) -> Self {
+        AppError::InternalServerError(error.to_string())
+    }
+}
+
+impl From<ReqwestError> for AppError {
+    fn from(error: ReqwestError) -> Self {
+        AppError::ScraperError(error.to_string())
+    }
+}
+
+pub type AppResult<T> = Result<T, AppError>; 
