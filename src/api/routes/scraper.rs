@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
+use tokio::time::{timeout, Duration};
 
 use crate::{
     error::{AppResult, AppError},
@@ -21,6 +22,8 @@ pub struct SearchRequest {
 #[derive(Debug, Serialize)]
 pub struct SearchResponse {
     task_id: String,
+    status: String,
+    message: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -29,6 +32,9 @@ pub struct TaskStatusResponse {
     products: Option<Vec<Product>>,
     error: Option<String>,
 }
+
+const TASK_TIMEOUT: Duration = Duration::from_secs(180);
+const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 #[post("/search")]
 pub async fn search_products(
@@ -53,55 +59,66 @@ pub async fn search_products(
         }
     }
     
-    // If not in cache, create and wait for task
-    match queue_service.create_task(request.query.clone()).await {
-        Ok(task_id) => {
-            tracing::info!("Created task {} for query: {}", task_id, request.query);
-            
-            // Wait for task completion with timeout
-            let mut attempts = 0;
-            const MAX_ATTEMPTS: u32 = 30; // 30 seconds timeout
-            
-            while attempts < MAX_ATTEMPTS {
-                match queue_service.get_task(&task_id).await {
-                    Ok(task) => match task.status {
-                        TaskStatus::Completed => {
-                            // Task completed, get results from cache
-                            match cache_service.get_search_results(&request.query).await {
-                                Ok(Some(products)) => {
-                                    return Ok(HttpResponse::Ok().json(products));
-                                }
-                                _ => {
-                                    return Err(AppError::InternalServerError(
-                                        "Task completed but results not found in cache".to_string()
-                                    ));
-                                }
-                            }
-                        }
-                        TaskStatus::Failed => {
-                            return Err(AppError::InternalServerError(
-                                task.error.unwrap_or_else(|| "Task failed".to_string())
-                            ));
-                        }
-                        _ => {
-                            // Task still processing, wait and retry
-                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-                            attempts += 1;
-                            continue;
-                        }
-                    },
-                    Err(e) => {
-                        return Err(AppError::InternalServerError(format!("Failed to check task status: {}", e)));
-                    }
-                }
-            }
-            
-            // Timeout reached
-            Err(AppError::InternalServerError("Task processing timeout".to_string()))
-        }
+    // If not in cache, create task
+    let task_id = match queue_service.create_task(request.query.clone()).await {
+        Ok(id) => id,
         Err(e) => {
             tracing::error!("Failed to create task: {}", e);
-            Err(AppError::InternalServerError(format!("Failed to create task: {}", e)))
+            return Err(AppError::InternalServerError(format!("Failed to create task: {}", e)));
+        }
+    };
+    
+    tracing::info!("Created task {} for query: {}", task_id, request.query);
+    
+    // Wait for task completion with timeout
+    match timeout(TASK_TIMEOUT, async {
+        loop {
+            match queue_service.get_task(&task_id).await {
+                Ok(task) => match task.status {
+                    TaskStatus::Completed => {
+                        // Task completed, get results from cache
+                        match cache_service.get_search_results(&request.query).await {
+                            Ok(Some(products)) => {
+                                return Ok(HttpResponse::Ok().json(products));
+                            }
+                            Ok(None) => {
+                                return Err(AppError::InternalServerError(
+                                    "Task completed but results not found in cache".to_string()
+                                ));
+                            }
+                            Err(e) => {
+                                return Err(AppError::InternalServerError(format!("Cache error: {}", e)));
+                            }
+                        }
+                    }
+                    TaskStatus::Failed => {
+                        return Err(AppError::InternalServerError(
+                            task.error.unwrap_or_else(|| "Task failed".to_string())
+                        ));
+                    }
+                    TaskStatus::Processing => {
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue;
+                    }
+                    TaskStatus::Pending => {
+                        tokio::time::sleep(POLL_INTERVAL).await;
+                        continue;
+                    }
+                },
+                Err(e) => {
+                    return Err(AppError::InternalServerError(format!("Failed to check task status: {}", e)));
+                }
+            }
+        }
+    }).await {
+        Ok(result) => result,
+        Err(_) => {
+            // Timeout occurred
+            Ok(HttpResponse::Accepted().json(SearchResponse {
+                task_id: task_id.clone(),
+                status: "processing".to_string(),
+                message: "Task is still processing. Please check status later using the task ID.".to_string(),
+            }))
         }
     }
 }
