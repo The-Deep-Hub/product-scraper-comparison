@@ -1,0 +1,152 @@
+[
+  {
+    "productName": "Martillo Clásico",
+    "providerName": "Leroy Merlin",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 10.99,
+    "discount": 0,
+    "providerURL": "https://www.leroymerlin.es",
+    "description": "Martillo tradicional con mango de madera.",
+    "purchaseLink": "https://www.leroymerlin.es/product/martillo-clasico"
+  },
+  {
+    "productName": "Martillo Antivibración",
+    "providerName": "Bauhaus",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 12.50,
+    "discount": 5,
+    "providerURL": "https://www.bauhaus.es",
+    "description": "Martillo con tecnología antivibración.",
+    "purchaseLink": "https://www.bauhaus.es/product/martillo-antivibracion"
+  },
+  {
+    "productName": "Martillo de Acero",
+    "providerName": "Brico Depot",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 15.99,
+    "discount": 10,
+    "providerURL": "https://www.bricodepot.es",
+    "description": "Martillo de acero inoxidable con mango ergonómico.",
+    "purchaseLink": "https://www.bricodepot.es/product/martillo-acero"
+  },
+  {
+    "productName": "Martillo Compacto",
+    "providerName": "Leroy Merlin",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 14.50,
+    "discount": 0,
+    "providerURL": "https://www.leroymerlin.es",
+    "description": "Martillo compacto ideal para reparaciones pequeñas.",
+    "purchaseLink": "https://www.leroymerlin.es/product/martillo-compacto"
+  },
+  {
+    "productName": "Martillo Profesional",
+    "providerName": "Bauhaus",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 18.00,
+    "discount": 15,
+    "providerURL": "https://www.bauhaus.es",
+    "description": "Martillo profesional para uso intensivo.",
+    "purchaseLink": "https://www.bauhaus.es/product/martillo-profesional"
+  },
+  {
+    "productName": "Martillo de Goma",
+    "providerName": "Brico Depot",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 9.99,
+    "discount": 0,
+    "providerURL": "https://www.bricodepot.es",
+    "description": "Martillo de goma para trabajos delicados.",
+    "purchaseLink": "https://www.bricodepot.es/product/martillo-goma"
+  },
+  {
+    "productName": "Martillo Liviano",
+    "providerName": "Leroy Merlin",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 8.50,
+    "discount": 5,
+    "providerURL": "https://www.leroymerlin.es",
+    "description": "Martillo liviano para tareas sencillas.",
+    "purchaseLink": "https://www.leroymerlin.es/product/martillo-liviano"
+  },
+  {
+    "productName": "Martillo Industrial",
+    "providerName": "Bauhaus",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 25.00,
+    "discount": 10,
+    "providerURL": "https://www.bauhaus.es",
+    "description": "Martillo diseñado para trabajos industriales.",
+    "purchaseLink": "https://www.bauhaus.es/product/martillo-industrial"
+  },
+  {
+    "productName": "Martillo Pequeño",
+    "providerName": "Brico Depot",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 7.50,
+    "discount": 0,
+    "providerURL": "https://www.bricodepot.es",
+    "description": "Martillo pequeño para reparaciones domésticas.",
+    "purchaseLink": "https://www.bricodepot.es/product/martillo-pequeno"
+  },
+  {
+    "productName": "Taladro Inalámbrico",
+    "providerName": "Leroy Merlin",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 60.99,
+    "discount": 10,
+    "providerURL": "https://www.leroymerlin.es",
+    "description": "Taladro inalámbrico con batería de litio.",
+    "purchaseLink": "https://www.leroymerlin.es/product/taladro-inalambrico"
+  },
+  {
+    "productName": "Taladro Compacto",
+    "providerName": "Bauhaus",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 65.00,
+    "discount": 5,
+    "providerURL": "https://www.bauhaus.es",
+    "description": "Taladro compacto y ligero.",
+    "purchaseLink": "https://www.bauhaus.es/product/taladro-compacto"
+  },
+  {
+    "productName": "Taladro Percutor",
+    "providerName": "Brico Depot",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 75.00,
+    "discount": 15,
+    "providerURL": "https://www.bricodepot.es",
+    "description": "Taladro percutor con múltiples velocidades.",
+    "purchaseLink": "https://www.bricodepot.es/product/taladro-percutor"
+  },
+  {
+    "productName": "Pintura Blanca Mate",
+    "providerName": "Leroy Merlin",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 22.99,
+    "discount": 5,
+    "providerURL": "https://www.leroymerlin.es",
+    "description": "Pintura blanca mate para interiores.",
+    "purchaseLink": "https://www.leroymerlin.es/product/pintura-blanca"
+  },
+  {
+    "productName": "Pintura Lavable",
+    "providerName": "Bauhaus",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 24.50,
+    "discount": 8,
+    "providerURL": "https://www.bauhaus.es",
+    "description": "Pintura lavable resistente a manchas.",
+    "purchaseLink": "https://www.bauhaus.es/product/pintura-lavable"
+  },
+  {
+    "productName": "Pintura Satinada",
+    "providerName": "Brico Depot",
+    "imageURL": "https://via.placeholder.com/150",
+    "price": 26.99,
+    "discount": 0,
+    "providerURL": "https://www.bricodepot.es",
+    "description": "Pintura satinada para acabados elegantes.",
+    "purchaseLink": "https://www.bricodepot.es/product/pintura-satinada"
+  }
+]
