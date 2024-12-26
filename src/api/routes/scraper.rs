@@ -50,12 +50,22 @@ pub async fn search_products(
     task_splitter: web::Data<Arc<dyn TaskSplitterService>>,
 ) -> AppResult<impl Responder> {
     info!("Received search request: {:?}", request);
+    info!("Query: {}, Store: {:?}", request.query, request.store);
+    
+    // Validate request
+    if request.query.trim().is_empty() {
+        error!("Empty search query received");
+        return Err(AppError::BadRequest("Search query cannot be empty".into()));
+    }
     
     // Try to get from cache first
     match cache_service.get_search_results(&request.query).await {
         Ok(Some(products)) => {
             info!("Cache hit for query: {}", request.query);
-            return Ok(HttpResponse::Ok().json(products));
+            info!("Returning {} products from cache", products.len());
+            return Ok(HttpResponse::Ok()
+                .content_type("application/json")
+                .json(products));
         }
         Ok(None) => {
             info!("Cache miss for query: {}", request.query);
@@ -68,12 +78,20 @@ pub async fn search_products(
     
     // Create main task
     let main_task = MainTask::new(request.query.clone());
-    cache_service.set_main_task(&main_task).await?;
+    info!("Created main task with ID: {}", main_task.id);
+    
+    if let Err(e) = cache_service.set_main_task(&main_task).await {
+        error!("Failed to set main task in cache: {}", e);
+        return Err(AppError::InternalServerError("Failed to create task".into()));
+    }
     
     info!("Created main task {} for query: {}", main_task.id, main_task.query);
     
     // Split task into store-specific tasks
-    task_splitter.split_task(&main_task).await?;
+    if let Err(e) = task_splitter.split_task(&main_task).await {
+        error!("Failed to split task: {}", e);
+        return Err(AppError::InternalServerError("Failed to split task".into()));
+    }
     
     info!("Split task {} into store-specific tasks", main_task.id);
     
@@ -96,32 +114,61 @@ pub async fn search_products(
                             }
                         }
                         
-                        return Ok(HttpResponse::Ok().json(all_products));
+                        info!("Task completed, returning {} products", all_products.len());
+                        return Ok(HttpResponse::Ok()
+                            .content_type("application/json")
+                            .json(TaskStatusResponse {
+                                status: "completed".to_string(),
+                                products: Some(all_products),
+                                error: None,
+                            }));
                     } else if task.status == TaskStatus::Failed {
-                        return Err(AppError::InternalServerError(
-                            task.error.unwrap_or_else(|| "Task failed".to_string())
-                        ));
+                        error!("Task failed: {}", task.error.as_deref().unwrap_or("Unknown error"));
+                        return Ok(HttpResponse::InternalServerError()
+                            .content_type("application/json")
+                            .json(TaskStatusResponse {
+                                status: "failed".to_string(),
+                                products: None,
+                                error: task.error,
+                            }));
                     }
                     
                     tokio::time::sleep(POLL_INTERVAL).await;
                 }
                 Ok(None) => {
-                    return Err(AppError::InternalServerError("Task not found".to_string()));
+                    error!("Task not found in cache");
+                    return Ok(HttpResponse::NotFound()
+                        .content_type("application/json")
+                        .json(TaskStatusResponse {
+                            status: "error".to_string(),
+                            products: None,
+                            error: Some("Task not found".to_string()),
+                        }));
                 }
                 Err(e) => {
-                    return Err(AppError::InternalServerError(format!("Failed to check task status: {}", e)));
+                    error!("Failed to check task status: {}", e);
+                    return Ok(HttpResponse::InternalServerError()
+                        .content_type("application/json")
+                        .json(TaskStatusResponse {
+                            status: "error".to_string(),
+                            products: None,
+                            error: Some(format!("Failed to check task status: {}", e)),
+                        }));
                 }
             }
         }
     }).await {
         Ok(result) => result,
         Err(_) => {
-            // Timeout occurred
-            Ok(HttpResponse::Accepted().json(SearchResponse {
-                task_id: main_task.id.clone(),
-                status: "processing".to_string(),
-                message: "Task is still processing. Please check status later using the task ID.".to_string(),
-            }))
+            // Timeout occurred - return a properly formatted JSON response
+            info!("Task processing timeout for ID: {}", main_task.id);
+            Ok(HttpResponse::Accepted()
+                .content_type("application/json")
+                .json(SearchResponse {
+                    task_id: main_task.id.clone(),
+                    status: "processing".to_string(),
+                    message: format!("Task {} is still processing. Please check status later using the task ID.", main_task.id),
+                }))
         }
     }
 }

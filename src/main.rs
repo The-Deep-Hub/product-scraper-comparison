@@ -102,9 +102,12 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(Arc::clone(&services.queue_service)))
             .app_data(web::Data::new(Arc::clone(&services.scraper_service)))
             .app_data(web::Data::new(Arc::clone(&services.task_splitter)))
-            .service(routes::scraper::search_products)
-            .service(routes::scraper::get_task_status)
-            .service(routes::scraper::get_product_details)
+            .service(
+                web::scope("/api/scraper")
+                    .service(routes::scraper::search_products)
+                    .service(routes::scraper::get_task_status)
+                    .service(routes::scraper::get_product_details)
+            )
     })
     .bind("127.0.0.1:8080")?
     .run()
