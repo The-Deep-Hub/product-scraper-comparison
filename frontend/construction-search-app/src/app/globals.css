@@ -3,19 +3,68 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #ffffff; /* Light mode background */
+  --foreground: #171717; /* Light mode text */
+
+  --primary: #34a853; /* Primary color for actions */
+  --secondary: #ff0000; /* Secondary color for warnings */
+  --accent: #ffc107; /* Accent color for highlights */
+  --muted: #6c757d; /* Muted text color */
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --background: #0a0a0a; /* Dark mode background */
+    --foreground: #ededed; /* Dark mode text */
   }
 }
 
 body {
+  font-family: "Geist Sans", Arial, sans-serif; /* Apply custom font */
   color: var(--foreground);
-  background: var(--background);
-  font-family: Arial, Helvetica, sans-serif;
+  background-color: var(--background);
 }
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+  font-family: "Geist Sans", sans-serif;
+}
+
+button {
+  font-family: "Geist Sans", sans-serif;
+  font-weight: bold;
+  cursor: pointer;
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+button:hover {
+  background-color: var(--primary-hover, #22863a); /* Define un color de hover */
+  transform: scale(1.05); /* Efecto de agrandar ligeramente */
+}
+
+input,
+textarea {
+  font-family: "Geist Sans", sans-serif;
+}
+
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.resultCard {
+  transition: background-color 0.3s ease, transform 0.2s ease;
+}
+
+.resultCard:hover {
+  /*background-color: #aad8b0; /* Color ligeramente diferente */
+  /* transform: translateY(-5px); Eleva ligeramente la tarjeta */
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); /* Añade sombra */
+}
+
+
+
