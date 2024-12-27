@@ -16,10 +16,10 @@ impl ProductPrice {
     /// Returns an error if the amount is negative or currency is empty.
     pub fn new(amount: f64, currency: String) -> AppResult<Self> {
         if amount < 0.0 {
-            return Err(AppError::ValidationError("Price amount cannot be negative".into()));
+            return Err(AppError::BadRequest("Price amount cannot be negative".into()));
         }
         if currency.trim().is_empty() {
-            return Err(AppError::ValidationError("Currency cannot be empty".into()));
+            return Err(AppError::BadRequest("Currency cannot be empty".into()));
         }
         Ok(Self { amount, currency })
     }
@@ -67,15 +67,15 @@ impl Product {
     ) -> AppResult<Self> {
         // Validate name
         if name.trim().is_empty() {
-            return Err(AppError::ValidationError("Product name cannot be empty".into()));
+            return Err(AppError::BadRequest("Product name cannot be empty".into()));
         }
 
         // Validate URLs
         if let Err(e) = Url::parse(&url) {
-            return Err(AppError::ValidationError(format!("Invalid product URL: {}", e)));
+            return Err(AppError::BadRequest(format!("Invalid product URL: {}", e)));
         }
         if let Err(e) = Url::parse(&image_url) {
-            return Err(AppError::ValidationError(format!("Invalid image URL: {}", e)));
+            return Err(AppError::BadRequest(format!("Invalid image URL: {}", e)));
         }
 
         Ok(Self {
