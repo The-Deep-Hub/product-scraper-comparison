@@ -74,6 +74,10 @@ pub trait QueueService: Send + Sync {
 }
 
 pub struct RabbitMQQueue {
+    /// The RabbitMQ connection. This field is not directly used but must be kept
+    /// to prevent the connection from being dropped. If this field is removed,
+    /// all operations would fail as the connection would be closed.
+    #[allow(dead_code)]
     connection: Connection,
     channel: Channel,
     queue_name: String,
