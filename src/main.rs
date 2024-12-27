@@ -1,43 +1,67 @@
 use std::sync::Arc;
-use actix_web::{web, App, HttpServer, middleware};
-use dotenv::dotenv;
+use actix_web::{web, App, HttpServer};
 use tracing::info;
 
-use crate::{
-    api::{middleware::Logger, routes},
+use rust_scraper::{
+    api::routes,
     clients::zyte::ZyteClient,
-    scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
     services::{
-        cache::{RedisCacheService, CacheService},
-        queue::{RabbitMQQueue, QueueService},
-        scraper::{CombinedScraperService, ScraperService},
-        worker::WorkerService,
+        cache::{CacheService, RedisCacheService},
+        queue::{QueueService, RabbitMQQueue},
+        scraper::{ScraperService, CombinedScraperService},
+        task_splitter::{TaskSplitterService, RabbitMQTaskSplitter},
     },
+    scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
 };
 
-mod api;
-mod clients;
-mod error;
-mod models;
-mod scrapers;
-mod services;
+struct AppServices {
+    cache_service: Arc<dyn CacheService>,
+    queue_service: Arc<dyn QueueService>,
+    scraper_service: Arc<dyn ScraperService>,
+    task_splitter: Arc<dyn TaskSplitterService>,
+}
 
-#[actix_web::main]
-async fn main() -> std::io::Result<()> {
+async fn init_services() -> Result<AppServices, Box<dyn std::error::Error>> {
     // Load environment variables
-    dotenv().ok();
-    
-    // Initialize logging
-    tracing_subscriber::fmt::init();
+    dotenv::dotenv().ok();
+
+    // Initialize Redis
+    let redis_url = format!(
+        "redis://{}:{}@{}:{}/",
+        std::env::var("REDIS_USER").unwrap_or_else(|_| "default".to_string()),
+        std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set"),
+        std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
+        std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string()),
+    );
+    let redis_password = std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set");
+    info!("Connecting to Redis at: {}", redis_url.replace(&redis_password, "****"));
     
     // Initialize services
-    let zyte_client = ZyteClient::new().expect("Failed to create Zyte client");
+    let cache_service = Arc::new(RedisCacheService::new(&redis_url).await?) as Arc<dyn CacheService>;
     
-    let redis_url = std::env::var("REDIS_URL").unwrap_or_else(|_| "redis://localhost:6379".to_string());
-    let cache_service = Arc::new(RedisCacheService::new(&redis_url).await.expect("Failed to create Redis cache service"));
-    let queue_service = Arc::new(RabbitMQQueue::new().await.expect("Failed to create RabbitMQ queue service"));
+    // Initialize RabbitMQ connection
+    let amqp_url = std::env::var("AMQP_ADDR").expect("AMQP_ADDR must be set");
+    let conn = lapin::Connection::connect(
+        &amqp_url,
+        lapin::ConnectionProperties::default(),
+    ).await?;
+    let channel = conn.create_channel().await?;
     
-    // Initialize scrapers
+    // Initialize queue service
+    let queue_service = Arc::new(RabbitMQQueue::new().await?) as Arc<dyn QueueService>;
+    
+    // Initialize task splitter
+    let task_splitter = Arc::new(RabbitMQTaskSplitter::new(
+        channel,
+        Arc::clone(&cache_service),
+    )) as Arc<dyn TaskSplitterService>;
+    
+    task_splitter.setup_queues().await?;
+    
+    // Initialize Zyte client
+    let zyte_client = ZyteClient::new()?;
+    
+    // Initialize individual scrapers
     let leroy_scraper = LeroyScraper::new(zyte_client.clone());
     let bauhaus_scraper = BauhausScraper::new(zyte_client.clone());
     let bricodepot_scraper = BricodepotScraper::new(zyte_client);
@@ -47,46 +71,45 @@ async fn main() -> std::io::Result<()> {
         leroy_scraper,
         bauhaus_scraper,
         bricodepot_scraper,
-        Box::new(RedisCacheService::new(&redis_url).await.expect("Failed to create Redis cache service")),
-        Box::new(RabbitMQQueue::new().await.expect("Failed to create RabbitMQ queue service")),
-    ));
-    
-    // Create worker service
-    let worker_service = WorkerService::new(
-        Arc::clone(&queue_service) as Arc<dyn QueueService>,
-        scraper_service.clone() as Arc<dyn ScraperService>,
-    );
-    
-    // Start worker service in background
-    tokio::spawn(async move {
-        if let Err(e) = worker_service.run().await {
-            tracing::error!("Worker service error: {}", e);
-        }
-    });
-    
-    info!("Starting HTTP server...");
-    
+        Box::new(RedisCacheService::new(&redis_url).await?),
+        Box::new(RabbitMQQueue::new().await?),
+    )) as Arc<dyn ScraperService>;
+
+    Ok(AppServices {
+        cache_service,
+        queue_service,
+        scraper_service,
+        task_splitter,
+    })
+}
+
+#[actix_web::main]
+async fn main() -> std::io::Result<()> {
+    // Initialize logging
+    tracing_subscriber::fmt()
+        .with_env_filter("rust_scraper=debug")
+        .init();
+
+    // Initialize services
+    let services = init_services()
+        .await
+        .expect("Failed to initialize services");
+
     // Start HTTP server
     HttpServer::new(move || {
         App::new()
-            .wrap(Logger)
-            .wrap(middleware::Compress::default())
-            .wrap(middleware::NormalizePath::trim())
-            .app_data(web::Data::new(scraper_service.clone() as Arc<dyn ScraperService>))
-            .app_data(web::Data::new(cache_service.clone() as Arc<dyn CacheService>))
-            .app_data(web::Data::new(queue_service.clone() as Arc<dyn QueueService>))
+            .app_data(web::Data::new(Arc::clone(&services.cache_service)))
+            .app_data(web::Data::new(Arc::clone(&services.queue_service)))
+            .app_data(web::Data::new(Arc::clone(&services.scraper_service)))
+            .app_data(web::Data::new(Arc::clone(&services.task_splitter)))
             .service(
-                web::scope("/api")
-                    .service(routes::health::healthcheck)
-                    .service(
-                        web::scope("/scraper")
-                            .service(routes::scraper::search_products)
-                            .service(routes::scraper::get_product_details)
-                            .service(routes::scraper::get_task_status)
-                    )
+                web::scope("/api/scraper")
+                    .service(routes::scraper::search_products)
+                    .service(routes::scraper::get_task_status)
+                    .service(routes::scraper::get_product_details)
             )
     })
-    .bind("0.0.0.0:8080")?
+    .bind("127.0.0.1:8080")?
     .run()
     .await
 }

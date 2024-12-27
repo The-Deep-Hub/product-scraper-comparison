@@ -11,10 +11,11 @@ pub struct ProductPrice {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
     pub name: String,
-    pub description: Option<String>,
+    pub description: String,
+    pub current_price: ProductPrice,
+    pub original_price: Option<ProductPrice>,
     pub url: String,
-    pub image_url: Option<String>,
-    pub price: Option<ProductPrice>,
+    pub image_url: String,
     pub store: Store,
     pub metadata: Option<HashMap<String, String>>,
 } 
