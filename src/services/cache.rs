@@ -84,7 +84,7 @@ impl CacheService for RedisCacheService {
         let key = Self::get_search_results_key(query);
         let json = serde_json::to_string(products)?;
         
-        conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
+        let _: () = conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
             AppError::CacheError(format!("Failed to set search results: {}", e))
         })?;
         
@@ -113,7 +113,7 @@ impl CacheService for RedisCacheService {
         let key = Self::get_product_key(&product.url);
         let json = serde_json::to_string(product)?;
         
-        conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
+        let _: () = conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
             AppError::CacheError(format!("Failed to set product details: {}", e))
         })?;
         
@@ -142,7 +142,7 @@ impl CacheService for RedisCacheService {
         let key = Self::get_main_task_key(&task.id);
         let json = serde_json::to_string(task)?;
         
-        conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
+        let _: () = conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
             AppError::CacheError(format!("Failed to set main task: {}", e))
         })?;
         
@@ -171,7 +171,7 @@ impl CacheService for RedisCacheService {
         let key = Self::get_store_task_key(&task.id);
         let json = serde_json::to_string(task)?;
         
-        conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
+        let _: () = conn.set_ex(&key, json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
             AppError::CacheError(format!("Failed to set store task: {}", e))
         })?;
         
@@ -180,9 +180,9 @@ impl CacheService for RedisCacheService {
     
     async fn set_store_result(&self, result: &StoreResult) -> AppResult<()> {
         let mut conn = self.client.clone();
+        let main_task_key = Self::get_main_task_key(&result.main_task_id);
         
         // Get the main task
-        let main_task_key = Self::get_main_task_key(&result.main_task_id);
         let main_task_json: Option<String> = conn.get(&main_task_key).await.map_err(|e| {
             AppError::CacheError(format!("Failed to get main task: {}", e))
         })?;
@@ -195,7 +195,7 @@ impl CacheService for RedisCacheService {
             
             // Save updated main task
             let updated_json = serde_json::to_string(&main_task)?;
-            conn.set_ex(&main_task_key, updated_json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
+            let _: () = conn.set_ex(&main_task_key, updated_json, CACHE_TTL.as_secs() as usize).await.map_err(|e| {
                 AppError::CacheError(format!("Failed to update main task: {}", e))
             })?;
         }
