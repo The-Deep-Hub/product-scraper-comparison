@@ -188,22 +188,28 @@ impl BaseScraper for BauhausScraper {
         debug!("Extracted name: {}", name);
 
         // Extract current price
-        let current_price = self.extract_price(card).map(|amount| {
-            debug!("Extracted current price: {}", amount);
-            ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            }
-        })?;
+        let current_price = self.extract_price(card)
+            .and_then(|amount| {
+                ProductPrice::new(amount, "EUR".to_string())
+                    .map_err(|e| {
+                        warn!("Invalid price for product {}: {}", name, e);
+                    })
+                    .ok()
+            })?;
+        debug!("Extracted current price: {}", current_price.format());
 
         // Extract original price if available
-        let original_price = self.extract_original_price(card).map(|amount| {
-            debug!("Extracted original price: {}", amount);
-            ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            }
-        });
+        let original_price = self.extract_original_price(card)
+            .and_then(|amount| {
+                ProductPrice::new(amount, "EUR".to_string())
+                    .map_err(|e| {
+                        warn!("Invalid original price for product {}: {}", name, e);
+                    })
+                    .ok()
+            });
+        if let Some(ref op) = original_price {
+            debug!("Extracted original price: {}", op.format());
+        }
 
         // Extract description
         let description = card
@@ -213,98 +219,47 @@ impl BaseScraper for BauhausScraper {
             .unwrap_or_else(|| "No description available".to_string());
         debug!("Extracted description: {}", description);
 
-        // Get product code from the card
-        let product_code = card
-            .value()
-            .attr("data-product-code")
+        // Extract image URL and product URL
+        let image_url = card
+            .select(&self.selectors.image)
+            .next()
+            .and_then(|el| el.value().attr("src"))
             .map(|s| s.to_string())?;
-        debug!("Found product code: {}", product_code);
 
-        // Find the matching JSON-LD script
-        let json_ld = {
-            let scripts = Selector::parse("script[type='application/ld+json']").unwrap();
-            let fragment = card.html();
-            let document = Html::parse_fragment(&fragment);
-            
-            document
-                .select(&scripts)
-                .find_map(|script| {
-                    let json_text = script.text().collect::<String>();
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_text) {
-                        if let Some(sku) = json.get("sku").and_then(|s| s.as_str()) {
-                            if sku == product_code {
-                                return Some(json);
-                            }
-                        }
-                    }
-                    None
-                })
-        };
+        let url = card
+            .select(&self.selectors.url)
+            .next()
+            .and_then(|el| el.value().attr("href"))
+            .map(|s| format!("{}{}", self.base_url, s))?;
 
-        // Extract image URL from JSON-LD
-        let image_url = if let Some(ref json) = json_ld {
-            json.get("image")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        } else {
-            // Fallback to img tag
-            card.select(&self.selectors.image)
-                .next()
-                .and_then(|img| img.value().attr("src"))
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        };
-        debug!("Extracted image URL: {}", image_url);
-
-        // Build URL from JSON-LD or fallback to href
-        let url = if let Some(ref json) = json_ld {
-            json.get("url")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| {
-                    card.select(&self.selectors.url)
-                        .next()
-                        .and_then(|a| a.value().attr("href"))
-                        .map(|href| {
-                            if href.starts_with("http") {
-                                href.to_string()
-                            } else {
-                                format!("{}{}", self.base_url, href)
-                            }
-                        })
-                        .unwrap_or_default()
-                })
-        } else {
-            card.select(&self.selectors.url)
-                .next()
-                .and_then(|a| a.value().attr("href"))
-                .map(|href| {
-                    if href.starts_with("http") {
-                        href.to_string()
-                    } else {
-                        format!("{}{}", self.base_url, href)
-                    }
-                })
-                .unwrap_or_default()
-        };
-        debug!("Built full URL: {}", url);
-
-        // Build metadata
+        // Create metadata with product code
         let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "bauhaus".to_string());
-        metadata.insert("sku".to_string(), product_code);
+        if let Some(code) = card.value().attr("data-product-code") {
+            metadata.insert("sku".to_string(), code.to_string());
+        }
 
-        Some(Product {
-            name,
+        // Create product with validation
+        let product = Product::new(
+            name.clone(),
             description,
             current_price,
             original_price,
             url,
             image_url,
-            store: Store::Bauhaus,
-            metadata: Some(metadata),
-        })
+            Store::Bauhaus,
+            Some(metadata),
+        ).map_err(|e| {
+            warn!("Failed to create product {}: {}", name, e);
+        }).ok()?;
+
+        // Log discount information if available
+        if product.is_on_sale() {
+            if let Some(discount) = product.format_discount() {
+                debug!("Product {} is on sale with {}% discount", name, discount);
+            }
+        }
+
+        Some(product)
     }
 }
 
