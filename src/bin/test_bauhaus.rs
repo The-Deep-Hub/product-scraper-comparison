@@ -33,15 +33,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 println!("\nProduct {}:", i + 1);
                 println!("Name: {}", product.name);
                 println!("URL: {}", product.url);
-                if let Some(price) = &product.price {
-                    println!("Price: {} {}", price.amount, price.currency);
+                println!("Current Price: {} {}", 
+                    product.current_price.amount, 
+                    product.current_price.currency);
+                
+                if let Some(original_price) = &product.original_price {
+                    println!("Original Price: {} {}", 
+                        original_price.amount, 
+                        original_price.currency);
                 }
-                if let Some(desc) = &product.description {
-                    println!("Description: {}", desc);
-                }
-                if let Some(img) = &product.image_url {
-                    println!("Image URL: {}", img);
-                }
+                
+                println!("Description: {}", product.description);
+                println!("Image URL: {}", product.image_url);
+                
                 if let Some(metadata) = &product.metadata {
                     println!("\nMetadata:");
                     for (key, value) in metadata {
