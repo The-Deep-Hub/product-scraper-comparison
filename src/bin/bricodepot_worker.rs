@@ -16,8 +16,8 @@ use std::time::Duration;
 use tokio::time::sleep;
 use futures::StreamExt;
 use lapin::{
-    options::*, types::FieldTable, BasicProperties,
-    Connection, ConnectionProperties, Channel, Consumer,
+    options::*, types::FieldTable,
+    Connection, ConnectionProperties,
 };
 use std::sync::Arc;
 

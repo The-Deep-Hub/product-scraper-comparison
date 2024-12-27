@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync;
 use rust_scraper::{
     clients::zyte::ZyteClient,
     services::{
