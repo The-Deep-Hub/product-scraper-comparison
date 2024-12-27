@@ -46,7 +46,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 pub async fn search_products(
     request: web::Json<SearchRequest>,
     cache_service: web::Data<Arc<dyn CacheService>>,
-    queue_service: web::Data<Arc<dyn QueueService>>,
+    _queue_service: web::Data<Arc<dyn QueueService>>,
     task_splitter: web::Data<Arc<dyn TaskSplitterService>>,
 ) -> AppResult<impl Responder> {
     info!("Received search request: {:?}", request);

@@ -36,13 +36,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     dotenv::dotenv().ok();
 
     // Initialize services
-    let (cache_service, queue_service, scraper) = initialize_services().await?;
+    let (cache_service, _queue_service, scraper) = initialize_services().await?;
     
     // Get RabbitMQ connection details
     let amqp_url = std::env::var("AMQP_ADDR").expect("AMQP_ADDR must be set");
     
     loop {
-        match run_consumer(&amqp_url, cache_service.clone(), queue_service.clone(), scraper.clone()).await {
+        match run_consumer(&amqp_url, cache_service.clone(), _queue_service.clone(), scraper.clone()).await {
             Ok(_) => {
                 error!("Consumer stopped unexpectedly");
             }
@@ -68,19 +68,19 @@ async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueSe
     let cache_service = Arc::new(RedisCacheService::new(&redis_url).await?) as Arc<dyn CacheService>;
     
     // Initialize queue service
-    let queue_service = Arc::new(RabbitMQQueue::new().await?) as Arc<dyn QueueService>;
+    let _queue_service = Arc::new(RabbitMQQueue::new().await?) as Arc<dyn QueueService>;
     
     // Initialize Zyte client and Bricodepot scraper
     let zyte_client = ZyteClient::new()?;
     let scraper = Arc::new(BricodepotScraper::new(zyte_client)) as Arc<dyn ScraperService>;
     
-    Ok((cache_service, queue_service, scraper))
+    Ok((cache_service, _queue_service, scraper))
 }
 
 async fn run_consumer(
     amqp_url: &str,
     cache_service: Arc<dyn CacheService>,
-    queue_service: Arc<dyn QueueService>,
+    _queue_service: Arc<dyn QueueService>,
     scraper: Arc<dyn ScraperService>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to RabbitMQ
@@ -110,7 +110,7 @@ async fn run_consumer(
                 let task: StoreTask = serde_json::from_slice(&delivery.data)?;
                 info!("Received task: {} for query: {}", task.id, task.query);
                 
-                match process_task(&task, queue_service.clone(), cache_service.clone(), scraper.clone()).await {
+                match process_task(&task, _queue_service.clone(), cache_service.clone(), scraper.clone()).await {
                     Ok(_) => {
                         delivery.ack(BasicAckOptions::default()).await?;
                         info!("Task {} processed successfully", task.id);
@@ -134,7 +134,7 @@ async fn run_consumer(
 
 async fn process_task(
     task: &StoreTask,
-    queue_service: Arc<dyn QueueService>,
+    _queue_service: Arc<dyn QueueService>,
     cache_service: Arc<dyn CacheService>,
     scraper: Arc<dyn ScraperService>,
 ) -> Result<(), Box<dyn std::error::Error>> {
