@@ -1,23 +1,4 @@
-   Compiling rustc_version_runtime v0.2.1
-    Checking sct v0.7.1
-    Checking rustls-webpki v0.101.7
-    Checking hashbrown v0.12.3
-   Compiling pest_generator v2.7.15
-    Checking radium v0.7.0
-    Checking doc-comment v0.3.3
-    Checking string_cache v0.8.7
-    Checking actix-codec v0.5.2
-    Checking local-channel v0.1.5
-    Checking futures-executor v0.3.31
-    Checking http-body v0.4.6
-   Compiling selectors v0.25.0
-    Checking serde_urlencoded v0.7.1
-    Checking flume v0.11.1
-    Checking regex-syntax v0.6.29
-    Checking dlv-list v0.3.0
-    Checking language-tags v0.3.2
-    Checking psl-types v2.0.11
-use rust_scraper::{
+   use rust_scraper::{
     clients::zyte::ZyteClient,
     services::{
         cache::{CacheService, RedisCacheService},
@@ -31,7 +12,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 use futures::StreamExt;
 use lapin::{
-    options::*, types::FieldTable, 
+    options::*, types::FieldTable,
     Connection, ConnectionProperties,
 };
 use std::sync::Arc;
