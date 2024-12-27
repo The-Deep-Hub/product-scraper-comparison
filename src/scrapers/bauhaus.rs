@@ -249,7 +249,7 @@ impl BaseScraper for BauhausScraper {
                 .unwrap_or_default()
         } else {
             // Fallback to img tag
-            card.select(&Selector::parse("img[src]").unwrap())
+            card.select(&self.selectors.image)
                 .next()
                 .and_then(|img| img.value().attr("src"))
                 .map(ToString::to_string)
@@ -263,7 +263,7 @@ impl BaseScraper for BauhausScraper {
                 .and_then(|v| v.as_str())
                 .map(ToString::to_string)
                 .unwrap_or_else(|| {
-                    card.select(&Selector::parse("a[href]").unwrap())
+                    card.select(&self.selectors.url)
                         .next()
                         .and_then(|a| a.value().attr("href"))
                         .map(|href| {
@@ -276,7 +276,7 @@ impl BaseScraper for BauhausScraper {
                         .unwrap_or_default()
                 })
         } else {
-            card.select(&Selector::parse("a[href]").unwrap())
+            card.select(&self.selectors.url)
                 .next()
                 .and_then(|a| a.value().attr("href"))
                 .map(|href| {
