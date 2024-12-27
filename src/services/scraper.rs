@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     models::{product::Product, store::Store},
     scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
     services::{cache::CacheService, queue::QueueService},

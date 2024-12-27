@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use tracing::{debug, info, error};
+use tracing::info;
 use urlencoding;
 
 use crate::{

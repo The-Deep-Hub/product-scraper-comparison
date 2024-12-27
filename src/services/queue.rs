@@ -5,8 +5,7 @@ use lapin::{
     Connection, ConnectionProperties, Channel,
 };
 use tracing::{info, error};
-use redis::{aio::ConnectionManager, AsyncCommands, FromRedisValue, ToRedisArgs};
-use std::time::Duration;
+use redis::{aio::ConnectionManager, AsyncCommands};
 use std::fmt;
 
 use crate::error::{AppError, AppResult};

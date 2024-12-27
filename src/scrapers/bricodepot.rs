@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use scraper::{Html, Selector, ElementRef};
 use std::collections::HashMap;
-use tracing::{debug, info, warn};
+use tracing::warn;
 
 use crate::{
     error::{AppError, AppResult},
