@@ -102,7 +102,7 @@ impl BricodepotScraper {
 
     fn extract_image_url(&self, card: &ElementRef) -> Option<String> {
         // Find all image tags
-        let mut image_tags: Vec<_> = card.select(&self.selectors.image).collect();
+        let image_tags: Vec<_> = card.select(&self.selectors.image).collect();
         if image_tags.is_empty() {
             warn!("No image tags found");
             return None;

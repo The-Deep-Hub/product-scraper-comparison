@@ -1,4 +1,3 @@
-use actix_web::{error::ResponseError, http::StatusCode};
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

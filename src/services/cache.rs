@@ -1,7 +1,6 @@
 use std::time::Duration;
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands};
-use tracing;
 
 use crate::{
     error::{AppResult, AppError},
