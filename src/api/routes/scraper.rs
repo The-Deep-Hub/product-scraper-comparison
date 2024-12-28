@@ -77,7 +77,7 @@ pub async fn search_products(
     }
     
     // Create main task
-    let main_task = MainTask::new(request.query.clone());
+    let main_task = MainTask::new(request.query.clone(), request.store);
     info!("Created main task with ID: {}", main_task.id);
     
     if let Err(e) = cache_service.set_main_task(&main_task).await {

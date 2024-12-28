@@ -50,13 +50,16 @@ pub struct StoreResult {
 }
 
 impl MainTask {
-    pub fn new(query: String) -> Self {
+    pub fn new(query: String, store: Option<Store>) -> Self {
         let now = Utc::now();
         Self {
             id: uuid::Uuid::new_v4().to_string(),
             query,
             status: TaskStatus::Pending,
-            pending_stores: vec![Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot],
+            pending_stores: match store {
+                Some(s) => vec![s],
+                None => vec![Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot],
+            },
             store_results: HashMap::new(),
             error: None,
             created_at: now,
