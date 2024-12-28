@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector, ElementRef};
+use scraper::{Html, Selector, ElementRef, Element};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use urlencoding;
@@ -179,6 +179,22 @@ impl BaseScraper for BauhausScraper {
     }
 
     fn extract_product_info(&self, card: &ElementRef) -> Option<Product> {
+        // Extract JSON-LD data first
+        let json_ld = card.next_sibling_element()
+            .and_then(|script| {
+                if script.value().name() == "script" && script.value().attr("type") == Some("application/ld+json") {
+                    let json_text = script.text().collect::<String>();
+                    debug!("Found JSON-LD: {}", json_text);
+                    serde_json::from_str::<serde_json::Value>(&json_text)
+                        .map_err(|e| {
+                            warn!("Failed to parse JSON-LD: {}", e);
+                        })
+                        .ok()
+                } else {
+                    None
+                }
+            });
+
         // Extract name
         let name = card
             .select(&self.selectors.name)
@@ -219,22 +235,67 @@ impl BaseScraper for BauhausScraper {
             .unwrap_or_else(|| "No description available".to_string());
         debug!("Extracted description: {}", description);
 
-        // Extract image URL and product URL
-        let image_url = card
-            .select(&self.selectors.image)
-            .next()
-            .and_then(|el| el.value().attr("src"))
-            .map(|s| s.to_string())?;
+        // Extract image URL from JSON-LD
+        let image_url = json_ld
+            .as_ref()
+            .and_then(|json| json.get("image"))
+            .and_then(|img| img.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                warn!("Failed to extract image URL from JSON-LD for product {}", name);
+                // Fallback to HTML image tag if JSON-LD fails
+                card.select(&self.selectors.image)
+                    .next()
+                    .and_then(|el| el.value().attr("src"))
+                    .map(|s| {
+                        if s.starts_with("http") {
+                            s.to_string()
+                        } else {
+                            format!("https:{}", s)
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        warn!("Failed to extract image URL from HTML for product {}", name);
+                        String::new()
+                    })
+            });
+        debug!("Extracted image URL: {}", image_url);
 
-        let url = card
-            .select(&self.selectors.url)
-            .next()
-            .and_then(|el| el.value().attr("href"))
-            .map(|s| format!("{}{}", self.base_url, s))?;
+        // Extract product URL from JSON-LD
+        let url = json_ld
+            .as_ref()
+            .and_then(|json| json.get("url"))
+            .and_then(|url| url.as_str())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                warn!("Failed to extract URL from JSON-LD for product {}", name);
+                // Fallback to HTML link if JSON-LD fails
+                card.select(&self.selectors.url)
+                    .next()
+                    .and_then(|el| el.value().attr("href"))
+                    .map(|s| {
+                        if s.starts_with("http") {
+                            s.to_string()
+                        } else {
+                            format!("{}{}", self.base_url, s)
+                        }
+                    })
+                    .unwrap_or_else(|| {
+                        warn!("Failed to extract URL from HTML for product {}", name);
+                        String::new()
+                    })
+            });
+        debug!("Extracted product URL: {}", url);
 
-        // Create metadata with product code
+        // Create metadata with product code and SKU from JSON-LD
         let mut metadata = HashMap::new();
-        if let Some(code) = card.value().attr("data-product-code") {
+        if let Some(ref json) = json_ld {
+            if let Some(sku) = json.get("sku").and_then(|s: &serde_json::Value| s.as_str()) {
+                debug!("Found SKU from JSON-LD: {}", sku);
+                metadata.insert("sku".to_string(), sku.to_string());
+            }
+        } else if let Some(code) = card.value().attr("data-product-code") {
+            debug!("Found SKU from HTML: {}", code);
             metadata.insert("sku".to_string(), code.to_string());
         }
 
