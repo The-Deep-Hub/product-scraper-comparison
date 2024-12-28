@@ -5,11 +5,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::error::{AppError, AppResult};
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct ZyteClient {
     client: Arc<Client>,
     api_key: String,
-    api_url: String,
+    base_url: String,
 }
 
 impl ZyteClient {
@@ -20,7 +20,7 @@ impl ZyteClient {
         Ok(Self {
             client: Arc::new(Client::new()),
             api_key,
-            api_url: "https://api.zyte.com/v1/extract".to_string(),
+            base_url: "https://api.zyte.com/v1/extract".to_string(),
         })
     }
 
@@ -33,8 +33,8 @@ impl ZyteClient {
         });
 
         let response = self.client
-            .post(&self.api_url)
-            .basic_auth(&self.api_key, Some(""))
+            .post(&self.base_url)
+            .header("Authorization", format!("Basic {}", self.api_key))
             .json(&payload)
             .send()
             .await?;
@@ -60,6 +60,10 @@ impl ZyteClient {
         Ok(rendered_html.to_string())
     }
 
+    pub async fn get(&self, url: &str) -> AppResult<String> {
+        self.get_rendered_html(url).await
+    }
+
     pub async fn get_api_response(&self, url: &str, options: Option<HashMap<String, Value>>) -> AppResult<Value> {
         let mut payload = json!({
             "url": url
@@ -74,8 +78,8 @@ impl ZyteClient {
         }
 
         let response = self.client
-            .post(&self.api_url)
-            .basic_auth(&self.api_key, Some(""))
+            .post(&self.base_url)
+            .header("Authorization", format!("Basic {}", self.api_key))
             .json(&payload)
             .send()
             .await?;
@@ -113,8 +117,8 @@ impl ZyteClient {
         }
 
         let response = self.client
-            .post(&self.api_url)
-            .basic_auth(&self.api_key, Some(""))
+            .post(&self.base_url)
+            .header("Authorization", format!("Basic {}", self.api_key))
             .json(&payload)
             .send()
             .await?;

@@ -62,17 +62,16 @@ async fn init_services() -> Result<AppServices, Box<dyn std::error::Error>> {
     let zyte_client = ZyteClient::new()?;
     
     // Initialize individual scrapers
-    let leroy_scraper = LeroyScraper::new(zyte_client.clone());
+    let leroy_scraper = LeroyScraper::new(zyte_client.clone())?;
+    let bricodepot_scraper = BricodepotScraper::new(zyte_client.clone());
     let bauhaus_scraper = BauhausScraper::new(zyte_client.clone());
-    let bricodepot_scraper = BricodepotScraper::new(zyte_client);
-    
-    // Create combined scraper service
+
     let scraper_service = Arc::new(CombinedScraperService::new(
         leroy_scraper,
         bauhaus_scraper,
         bricodepot_scraper,
         Box::new(RedisCacheService::new(&redis_url).await?),
-        Box::new(RabbitMQQueue::new().await?),
+        Box::new(RabbitMQQueue::new().await?)
     )) as Arc<dyn ScraperService>;
 
     Ok(AppServices {

@@ -39,7 +39,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let zyte_client = ZyteClient::new()?.clone();
 
     // Initialize individual scrapers
-    let leroy_scraper = LeroyScraper::new(zyte_client.clone());
+    let leroy_scraper = LeroyScraper::new(zyte_client.clone())?;
     let bauhaus_scraper = BauhausScraper::new(zyte_client.clone());
     let bricodepot_scraper = BricodepotScraper::new(zyte_client);
 
@@ -49,9 +49,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bauhaus_scraper,
         bricodepot_scraper,
         cache_service,
-        queue_service,
+        queue_service
     );
-
+    
     // Test search functionality
     info!("Testing search for query: taladro");
     info!("Test 1: Searching all stores (first time, no cache)");

@@ -22,6 +22,12 @@ pub struct CombinedScraperService {
 }
 
 impl CombinedScraperService {
+
+/// Creates a new CombinedScraperService with the following scrapers in order:
+/// 1. Leroy Merlin scraper
+/// 2. Bauhaus scraper
+/// 3. Bricodepot scraper
+
     pub fn new(
         leroy_scraper: LeroyScraper,
         bauhaus_scraper: BauhausScraper,

@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = ZyteClient::new()?;
 
     // Initialize scraper
-    let scraper = LeroyScraper::new(client);
+    let scraper = LeroyScraper::new(client)?;
 
     // Test search
     let query = "taladro";

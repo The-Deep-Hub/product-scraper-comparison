@@ -72,7 +72,7 @@ async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueSe
     
     // Initialize Zyte client and Leroy scraper
     let zyte_client = ZyteClient::new()?;
-    let scraper = Arc::new(LeroyScraper::new(zyte_client)) as Arc<dyn ScraperService>;
+    let scraper = Arc::new(LeroyScraper::new(zyte_client)?) as Arc<dyn ScraperService>;
     
     Ok((cache_service, _queue_service, scraper))
 }

@@ -1,346 +1,212 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector};
-use serde_json::{Value, json};
+use scraper::{Html, ElementRef};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
-use urlencoding;
+use crate::models::{Product, ProductPrice, Store, Selectors};
+use crate::scrapers::base::BaseScraper;
+use crate::error::{AppError, AppResult};
+use crate::clients::zyte::ZyteClient;
+use crate::services::scraper::ScraperService;
 
-use crate::{
-    error::{AppError, AppResult},
-    models::{
-        product::{Product, ProductPrice},
-        store::Store,
-    },
-    services::scraper::ScraperService,
-    clients::zyte::ZyteClient,
-};
+const BASE_URL: &str = "https://www.leroymerlin.es";
+const SEARCH_URL: &str = "https://www.leroymerlin.es/search?q=";
 
-const BASE_IMAGE_URL: &str = "https://media.adeo.com/media/";
-
+/// Leroy Merlin scraper implementation
+#[derive(Debug)]
 pub struct LeroyScraper {
     base_url: String,
+    search_url: String,
     client: ZyteClient,
+    selectors: Selectors,
 }
 
 impl LeroyScraper {
-    pub fn new(client: ZyteClient) -> Self {
-        Self {
-            base_url: "https://www.leroymerlin.es".to_string(),
+    pub fn new(client: ZyteClient) -> AppResult<Self> {
+        let mut selectors = HashMap::new();
+        selectors.insert("product_card", "li.product-thumbnail");
+        selectors.insert("title", "span.a-designation__label");
+        selectors.insert("price", "span.js-main-price");
+        selectors.insert("original_price", "span.km-price__from-without-offer");
+        selectors.insert("url", "a.a-designation");
+        selectors.insert("image", "img.a-illustration__img");
+        selectors.insert("next_page", ".pagination__next-page-button");
+
+        Ok(Self {
+            base_url: BASE_URL.to_string(),
+            search_url: SEARCH_URL.to_string(),
             client,
-        }
+            selectors: Selectors::new(selectors)?,
+        })
     }
 
-    fn extract_products_from_html(&self, html: &str) -> Vec<Value> {
-        debug!("Extracting products from HTML");
-        let document = Html::parse_document(html);
-        let product_selector = Selector::parse("li.product-thumbnail").expect("Failed to parse product selector");
+    fn extract_price(&self, product: ElementRef) -> Option<f64> {
+        let price_text = product
+            .select(self.selectors.get("price")?)
+            .next()?
+            .text()
+            .collect::<String>();
+
+        debug!("Found price text: {}", price_text);
+        
+        price_text
+            .trim()
+            .replace('€', "")
+            .replace(",", ".")
+            .parse()
+            .ok()
+    }
+
+    fn extract_original_price(&self, product: ElementRef) -> Option<f64> {
+        let price_text = product
+            .select(self.selectors.get("original_price")?)
+            .next()?
+            .text()
+            .collect::<String>();
+
+        debug!("Found original price text: {}", price_text);
+        
+        price_text
+            .trim()
+            .replace('€', "")
+            .replace(",", ".")
+            .parse()
+            .ok()
+    }
+
+    fn extract_image(&self, product: ElementRef) -> Option<String> {
+        product
+            .select(self.selectors.get("image")?)
+            .next()
+            .and_then(|el| el.value().attr("src"))
+            .map(|s| s.to_string())
+    }
+
+    fn extract_url(&self, product: ElementRef) -> Option<String> {
+        product
+            .select(self.selectors.get("url")?)
+            .next()
+            .and_then(|el| el.value().attr("href"))
+            .map(|s| s.to_string())
+    }
+
+    fn extract_name(&self, product: ElementRef) -> Option<String> {
+        product
+            .select(self.selectors.get("title")?)
+            .next()
+            .map(|el| el.text().collect::<String>())
+            .map(|s| s.trim().to_string())
+    }
+
+    fn extract_product_info(&self, product: ElementRef) -> Option<Product> {
+        let name = self.extract_name(product)?;
+        debug!("Found product name: {}", name);
+
+        let current_price = if let Some(price) = self.extract_price(product) {
+            ProductPrice {
+                amount: price,
+                currency: "EUR".to_string(),
+            }
+        } else {
+            return None;
+        };
+
+        let original_price = self.extract_original_price(product).map(|price| ProductPrice {
+            amount: price,
+            currency: "EUR".to_string(),
+        });
+
+        let image_url = self.extract_image(product)?;
+        let url = self.extract_url(product)?;
+
+        Some(Product::new(
+            name,
+            String::new(), // Empty description for now
+            current_price,
+            original_price,
+            url,
+            image_url,
+            Store::LeroyMerlin,
+            None, // No metadata for now
+        ).unwrap()) // Safe to unwrap since we provide all required fields
+    }
+    
+    #[allow(dead_code)]
+    fn has_next_page(&self, document: &Html) -> bool {
+        if let Some(next_page_selector) = self.selectors.get("next_page") {
+            document
+                .select(next_page_selector)
+                .next()
+                .map(|el| el.value().attr("href"))
+                .is_some()
+        } else {
+            false
+        }
+    }
+}
+
+#[async_trait]
+impl BaseScraper for LeroyScraper {
+    fn get_store_name(&self) -> &str {
+        "leroy"
+    }
+
+    fn get_base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn get_search_url(&self) -> &str {
+        &self.search_url
+    }
+
+    fn extract_product_info(&self, product: &ElementRef) -> Option<Product> {
+        self.extract_product_info(*product)
+    }
+
+    async fn get_product_data(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
+        let search_url = format!("{}{}", self.get_search_url(), query);
+        let html = self.client.get(&search_url).await?;
+        
+        let document = Html::parse_document(&html);
         let mut products = Vec::new();
 
-        for product in document.select(&product_selector) {
-            let mut product_data = serde_json::Map::new();
+        if let Some(product_selector) = self.selectors.get("product_card") {
+            let product_cards: Vec<_> = document.select(product_selector).collect();
+            info!("Found {} product cards", product_cards.len());
 
-            // Extract name
-            if let Some(name_el) = product.select(&Selector::parse("span.a-designation__label").unwrap()).next() {
-                let name = name_el.text().collect::<String>().trim().to_string();
-                debug!("Found product: {}", name);
-                product_data.insert("name".to_string(), json!(name));
-            }
-
-            // Extract current price
-            if let Some(price_el) = product.select(&Selector::parse("span.js-main-price").unwrap()).next() {
-                let price = price_el.text().collect::<String>().trim().to_string();
-                debug!("Found price: {}", price);
-                product_data.insert("js-main-price".to_string(), json!(price));
-            }
-
-            // Extract original price
-            if let Some(original_price_el) = product.select(&Selector::parse("span.km-price__from-without-offer").unwrap()).next() {
-                let original_price = original_price_el.text().collect::<String>().trim().to_string();
-                debug!("Found original price: {}", original_price);
-                product_data.insert("km-price__from-without-offer".to_string(), json!(original_price));
-            }
-
-            // Extract URL
-            if let Some(url_el) = product.select(&Selector::parse("a.a-designation").unwrap()).next() {
-                if let Some(href) = url_el.value().attr("href") {
-                    debug!("Found URL: {}", href);
-                    product_data.insert("url".to_string(), json!(href));
-                }
-            }
-
-            // Extract image URL
-            if let Some(img_el) = product.select(&Selector::parse("img.a-illustration__img").unwrap()).next() {
-                if let Some(src) = img_el.value().attr("src") {
-                    debug!("Found image URL: {}", src);
-                    product_data.insert("image".to_string(), json!(src));
-                }
-            }
-
-            // Extract SKU from data-reflm attribute
-            if let Some(sku) = product.value().attr("data-reflm") {
-                debug!("Found SKU: {}", sku);
-                product_data.insert("sku".to_string(), json!(sku));
-            }
-
-            // Extract description from alt attribute of image
-            if let Some(img_el) = product.select(&Selector::parse("img.a-illustration__img").unwrap()).next() {
-                if let Some(alt) = img_el.value().attr("alt") {
-                    debug!("Found description: {}", alt);
-                    product_data.insert("description".to_string(), json!(alt));
-                }
-            }
-
-            if !product_data.is_empty() {
-                products.push(Value::Object(product_data));
-            }
-        }
-
-        info!("Extracted {} products from HTML", products.len());
-        products
-    }
-
-    fn extract_product_from_html(&self, html: &str) -> Option<Value> {
-        debug!("Extracting product details from HTML");
-        let document = Html::parse_document(html);
-        let script_selector = Selector::parse("script[type='application/ld+json']")
-            .expect("Failed to parse script selector");
-
-        for script in document.select(&script_selector) {
-            if let Some(content) = script.text().next() {
-                if let Ok(data) = serde_json::from_str::<Value>(content) {
-                    // Check if this is product data (should have @type: "Product")
-                    if data.get("@type").and_then(|t| t.as_str()) == Some("Product") {
-                        debug!("Found product JSON-LD data");
-                        return Some(data);
-                    }
+            for card in product_cards.iter().take(num_products) {
+                if let Some(product) = self.extract_product_info(*card) {
+                    debug!("Successfully extracted product: {}", product.name);
+                    products.push(product);
+                } else {
+                    warn!("Failed to extract product info from card");
                 }
             }
         }
-
-        warn!("No product JSON-LD data found");
-        None
-    }
-
-    fn parse_product_details(&self, product_data: &Value) -> Option<Product> {
-        let name = product_data.get("name")?.as_str()?.to_string();
-        debug!("Parsing product details for: {}", name);
         
-        // Extract current price from offers
-        let current_price = product_data
-            .get("offers")
-            .and_then(|o| o.get("price"))
-            .and_then(|p| p.as_str())
-            .and_then(|p| p.parse::<f64>().ok())
-            .map(|amount| ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            })?;
-
-        debug!("Current price: {}", current_price.format());
-
-        // Get original price if available
-        let original_price = product_data
-            .get("offers")
-            .and_then(|o| o.get("originalPrice"))
-            .and_then(|p| p.as_str())
-            .and_then(|p| p.parse::<f64>().ok())
-            .map(|amount| ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            });
-
-        if let Some(ref op) = original_price {
-            debug!("Original price: {}", op.format());
-        }
-
-        // Get URL (required)
-        let url = product_data
-            .get("url")
-            .and_then(|u| u.as_str())
-            .map(|u| u.to_string())?;
-
-        debug!("Product URL: {}", url);
-
-        // Get image URL (required)
-        let image_url = product_data
-            .get("image")
-            .and_then(|i| i.as_str())
-            .map(|i| i.to_string())?;
-
-        debug!("Image URL: {}", image_url);
-
-        // Get description (required, with fallback)
-        let description = product_data
-            .get("description")
-            .and_then(|d| d.as_str())
-            .map(|d| d.to_string())
-            .unwrap_or_else(|| "No description available".to_string());
-
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "leroymerlin".to_string());
-        
-        // Add SKU to metadata
-        if let Some(sku) = product_data.get("sku").and_then(|s| s.as_str()) {
-            debug!("Found SKU: {}", sku);
-            metadata.insert("sku".to_string(), sku.to_string());
-        }
-
-        Some(Product {
-            name,
-            description,
-            current_price,
-            original_price,
-            url,
-            image_url,
-            store: Store::LeroyMerlin,
-            metadata: Some(metadata),
-        })
-    }
-
-    fn parse_product(&self, product_data: &Value) -> Option<Product> {
-        let name = product_data.get("name")?.as_str()?.to_string();
-        debug!("Parsing product: {}", name);
-        
-        // Extract current price from the main price element
-        let current_price = product_data
-            .get("js-main-price")
-            .and_then(|p| p.as_str())
-            .or_else(|| {
-                product_data
-                    .get("price")
-                    .and_then(|p| p.as_str())
-            })
-            .and_then(|p| p.replace('€', "").trim().parse::<f64>().ok())
-            .map(|amount| ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            })?;
-
-        debug!("Current price: {}", current_price.format());
-
-        // Extract original price from the crossed price
-        let original_price = product_data
-            .get("km-price__from-without-offer")
-            .and_then(|p| p.as_str())
-            .or_else(|| {
-                product_data
-                    .get("crossed_price")
-                    .and_then(|p| p.as_str())
-            })
-            .and_then(|p| p.replace('€', "").trim().parse::<f64>().ok())
-            .map(|amount| ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            });
-
-        if let Some(ref op) = original_price {
-            debug!("Original price: {}", op.format());
-        }
-
-        // Build URL
-        let url = product_data
-            .get("url")
-            .and_then(|u| u.as_str())
-            .map(|u| if u.starts_with("http") { u.to_string() } else { format!("{}{}", self.base_url, u) })?;
-
-        debug!("Product URL: {}", url);
-
-        // Build image URL
-        let image_url = product_data
-            .get("image")
-            .and_then(|i| i.as_str())
-            .map(|i| i.to_string())
-            .or_else(|| {
-                product_data
-                    .get("sku")
-                    .and_then(|s| s.as_str())
-                    .map(|sku| format!("{}{}/media.jpg", BASE_IMAGE_URL, sku))
-            })?;
-
-        debug!("Image URL: {}", image_url);
-
-        // Get description
-        let description = product_data
-            .get("description")
-            .and_then(|d| d.as_str())
-            .unwrap_or("No description available")
-            .to_string();
-
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "leroymerlin".to_string());
-        
-        // Add SKU to metadata
-        if let Some(sku) = product_data.get("sku").and_then(|s| s.as_str()) {
-            debug!("Found SKU: {}", sku);
-            metadata.insert("sku".to_string(), sku.to_string());
-        }
-
-        Some(Product {
-            name,
-            description,
-            current_price,
-            original_price,
-            url,
-            image_url,
-            store: Store::LeroyMerlin,
-            metadata: Some(metadata),
-        })
-    }
-
-    async fn scrape_url(&self, url: &str) -> AppResult<String> {
-        debug!("Scraping URL: {}", url);
-        let html = self.client.get_rendered_html(url).await?;
-        Ok(html)
+        info!("Successfully extracted {} products", products.len());
+        Ok(products)
     }
 }
 
 #[async_trait]
 impl ScraperService for LeroyScraper {
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
-        info!("Getting product details from URL: {}", url);
+        let html = self.client.get(url).await?;
+        let document = Html::parse_document(&html);
         
-        let html = self.scrape_url(url).await?;
-        
-        // Try to extract product data from LD+JSON
-        if let Some(product_data) = self.extract_product_from_html(&html) {
-            if let Some(product) = self.parse_product_details(&product_data) {
-                info!("Successfully extracted product details: {}", product.name);
-                return Ok(product);
+        if let Some(product_selector) = self.selectors.get("product_card") {
+            if let Some(product) = document.select(product_selector).next() {
+                if let Some(product_data) = self.extract_product_info(product) {
+                    return Ok(product_data);
+                }
             }
         }
         
-        warn!("Failed to extract product details from URL: {}", url);
-        Err(AppError::BadRequest("Product data not found".into()))
+        Err(AppError::BadRequest("Failed to extract product details".into()))
     }
 
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
-        info!("Searching Leroy Merlin for query: {}", query);
-        let url = format!("{}/search?q={}", self.base_url, urlencoding::encode(query));
-        debug!("Search URL: {}", url);
-
-        // First get all the HTML
-        let html = self.scrape_url(&url).await?;
-        
-        // Extract all products data
-        let raw_products = self.extract_products_from_html(&html);
-        info!("Found {} raw products", raw_products.len());
-        
-        // Now process all products
-        let mut products = Vec::new();
-        for product_data in raw_products {
-            match self.parse_product(&product_data) {
-                Some(product) => {
-                    debug!("Successfully parsed product: {}", product.name);
-                    products.push(product);
-                }
-                None => {
-                    warn!("Failed to parse product from data");
-                }
-            }
-        }
-
-        info!("Successfully parsed {} products", products.len());
-        Ok(products)
+        self.get_product_data(query, 24).await // Default to 24 products per page
     }
 
     async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>> {
