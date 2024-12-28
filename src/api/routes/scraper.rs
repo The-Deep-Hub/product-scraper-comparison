@@ -2,7 +2,7 @@ use std::sync::Arc;
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use tokio::time::{timeout, Duration};
-use tracing::{info, error};
+use tracing::{info, error, debug};
 
 use crate::{
     error::{AppResult, AppError},
@@ -49,8 +49,11 @@ pub async fn search_products(
     _queue_service: web::Data<Arc<dyn QueueService>>,
     task_splitter: web::Data<Arc<dyn TaskSplitterService>>,
 ) -> AppResult<impl Responder> {
-    info!("Received search request: {:?}", request);
-    info!("Query: {}, Store: {:?}", request.query, request.store);
+    debug!("Received raw request: {:?}", request);
+    info!("Processing search request - Query: {}, Store: {:?}", request.query, request.store);
+
+    // Log that services are being used
+    debug!("Attempting to use services for request processing...");
     
     // Validate request
     if request.query.trim().is_empty() {
@@ -59,6 +62,7 @@ pub async fn search_products(
     }
     
     // Try to get from cache first
+    debug!("Checking cache for query: {}", request.query);
     match cache_service.get_search_results(&request.query).await {
         Ok(Some(products)) => {
             info!("Cache hit for query: {}", request.query);
@@ -77,6 +81,7 @@ pub async fn search_products(
     }
     
     // Create main task
+    debug!("Creating main task for query: {}", request.query);
     let main_task = MainTask::new(request.query.clone(), request.store);
     info!("Created main task with ID: {}", main_task.id);
     
@@ -88,6 +93,7 @@ pub async fn search_products(
     info!("Created main task {} for query: {}", main_task.id, main_task.query);
     
     // Split task into store-specific tasks
+    debug!("Splitting task {} into store-specific tasks", main_task.id);
     if let Err(e) = task_splitter.split_task(&main_task).await {
         error!("Failed to split task: {}", e);
         return Err(AppError::InternalServerError("Failed to split task".into()));
@@ -227,4 +233,4 @@ pub async fn get_product_details(
     }
     
     Ok(HttpResponse::Ok().json(product))
-} 
+}

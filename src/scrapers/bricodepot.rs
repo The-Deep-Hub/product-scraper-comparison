@@ -221,6 +221,10 @@ impl BaseScraper for BricodepotScraper {
 
 #[async_trait]
 impl ScraperService for BricodepotScraper {
+    fn get_store(&self) -> Store {
+        Store::Bricodepot
+    }
+
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
         info!("Fetching product details from URL: {}", url);
         let html = self.fetch_search_results(&self.client, url).await?;

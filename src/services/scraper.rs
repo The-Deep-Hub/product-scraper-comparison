@@ -8,6 +8,7 @@ use crate::{
 
 #[async_trait]
 pub trait ScraperService: Send + Sync {
+    fn get_store(&self) -> Store;
     async fn get_product_details(&self, url: &str) -> AppResult<Product>;
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>>;
     async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>>;
@@ -55,6 +56,12 @@ impl CombinedScraperService {
 
 #[async_trait]
 impl ScraperService for CombinedScraperService {
+    fn get_store(&self) -> Store {
+        // This implementation does not make sense for CombinedScraperService, 
+        // as it combines multiple stores. You might want to reconsider this implementation.
+        Store::LeroyMerlin
+    }
+
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
         // Try to get from cache first
         if let Ok(Some(product)) = self.cache_service.get_product_details(url).await {

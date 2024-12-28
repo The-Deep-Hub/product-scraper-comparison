@@ -23,6 +23,14 @@ pub enum AppError {
     QueueError(String),
     #[display(fmt = "Scraper Error: {}", _0)]
     ScraperError(String),
+    #[display(fmt = "Worker Error: {}", _0)]
+    WorkerError(String),
+    #[display(fmt = "Configuration Error: {}", _0)]
+    ConfigError(String),
+    #[display(fmt = "Rate Limit Error: {}", _0)]
+    RateLimitError(String),
+    #[display(fmt = "Task Error: {}", _0)]
+    TaskError(String),
 }
 
 impl StdError for AppError {}
@@ -37,6 +45,10 @@ impl ResponseError for AppError {
             AppError::CacheError(msg) => HttpResponse::InternalServerError().json(msg),
             AppError::QueueError(msg) => HttpResponse::InternalServerError().json(msg),
             AppError::ScraperError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::WorkerError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::ConfigError(msg) => HttpResponse::InternalServerError().json(msg),
+            AppError::RateLimitError(msg) => HttpResponse::TooManyRequests().json(msg),
+            AppError::TaskError(msg) => HttpResponse::InternalServerError().json(msg),
         }
     }
 }

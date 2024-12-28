@@ -4,33 +4,166 @@ use tokio::time::Duration;
 use tracing::{info, error};
 
 use rust_scraper::{
-    models::store::Store,
+    models::{
+        store::Store,
+        worker::{WorkerConfig, WorkerStats, WorkerStatus},
+        task::{StoreTask, StoreResult},
+    },
     services::{
         cache::{CacheService, RedisCacheService},
         queue::{QueueService, RabbitMQQueue},
-        scraper::{ScraperService, CombinedScraperService},
+        scraper::ScraperService,
     },
     scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
     clients::zyte::ZyteClient,
+    error::{AppError, AppResult},
 };
 
 #[derive(Parser, Debug)]
-#[clap(author, version, about)]
+#[command(author, version, about, long_about = None)]
 struct Args {
-    /// Store to process (bauhaus, bricodepot, leroy)
-    #[clap(long)]
-    store: Store,
+    /// Stores to process with their concurrency (format: store:concurrency, e.g., bauhaus:3,bricodepot:2)
+    #[arg(short, long, value_delimiter = ',')]
+    stores: Vec<WorkerConfig>,
 
-    /// Number of concurrent tasks to process
-    #[clap(long, default_value = "1")]
-    concurrency: u32,
-
-    /// Time to wait between processing tasks (in milliseconds)
-    #[clap(long, default_value = "1000")]
+    #[arg(short, long, default_value = "1000")]
     poll_interval: u64,
+
+    #[arg(short, long, default_value = "3")]
+    max_retries: u32,
+
+    #[arg(short, long, default_value = "5000")]
+    retry_delay: u64,
 }
 
-async fn initialize_services(store: Store) -> Result<(Arc<dyn CacheService>, Arc<dyn QueueService>, Arc<dyn ScraperService>), Box<dyn std::error::Error>> {
+struct StoreWorker {
+    store: Store,
+    cache_service: Arc<dyn CacheService>,
+    queue_service: Arc<dyn QueueService>,
+    scraper: Arc<dyn ScraperService + Send + Sync>,
+    stats: WorkerStats,
+}
+
+async fn create_store_worker(
+    config: &WorkerConfig,
+    cache_service: Arc<dyn CacheService>,
+    queue_service: Arc<dyn QueueService>,
+    zyte_client: Arc<ZyteClient>,
+) -> AppResult<StoreWorker> {
+    let scraper: Arc<dyn ScraperService + Send + Sync> = match config.store {
+        Store::Bauhaus => Arc::new(BauhausScraper::new((*zyte_client).clone())),
+        Store::Bricodepot => Arc::new(BricodepotScraper::new((*zyte_client).clone())),
+        Store::LeroyMerlin => Arc::new(LeroyScraper::new((*zyte_client).clone())?),
+    };
+
+    Ok(StoreWorker {
+        store: config.store,
+        cache_service,
+        queue_service,
+        scraper,
+        stats: WorkerStats {
+            store: config.store,
+            last_task_time: None,
+            status: WorkerStatus::Idle,
+            tasks_processed: 0,
+            errors: 0,
+        },
+    })
+}
+
+async fn process_tasks(mut worker: StoreWorker, config: WorkerConfig) -> AppResult<()> {
+    let queue_name = format!("store_tasks_{}", worker.store.to_string().to_lowercase());
+    info!(
+        "[{:?}-{:02}] Starting worker thread for queue {}",
+        worker.store, worker.stats.store, queue_name
+    );
+
+    loop {
+        match worker.queue_service.consume(&queue_name).await {
+            Ok(Some(message)) => {
+                let message = message.downcast::<Vec<u8>>()
+                    .map_err(|_| AppError::QueueError("Failed to downcast message".into()))?;
+                
+                let task: StoreTask = serde_json::from_slice(&message)
+                    .map_err(|e| AppError::QueueError(format!("Failed to deserialize task: {}", e)))?;
+
+                info!(
+                    "[{:?}-{:02}] Processing task {} for store {:?}",
+                    worker.store, worker.stats.store, task.id, worker.store
+                );
+
+                worker.stats.status = WorkerStatus::Running;
+
+                match worker.scraper.search_products(&task.query).await {
+                    Ok(products) => {
+                        info!("Found {} products for query: {}", products.len(), task.query);
+                        let result = StoreResult {
+                            task_id: task.id.clone(),
+                            main_task_id: task.main_task_id.clone(),
+                            store: worker.store,
+                            products,
+                            created_at: chrono::Utc::now(),
+                        };
+                        if let Err(e) = worker.cache_service.set_store_result(&result).await {
+                            error!("Failed to cache results for task {}: {}", task.id, e);
+                        }
+                        worker.queue_service.mark_task_completed(task.id).await?;
+                        worker.stats.tasks_processed += 1;
+                        worker.stats.status = WorkerStatus::Idle;
+                    }
+                    Err(e) => {
+                        error!("Failed to process task {}: {}", task.id, e);
+                        worker.queue_service.mark_task_failed(task.id, e.to_string()).await?;
+                        worker.stats.errors += 1;
+                        worker.stats.status = WorkerStatus::Error(e.to_string());
+                    }
+                }
+            }
+            Ok(None) => {
+                info!(
+                    "[{:?}-{:02}] No pending tasks, waiting...",
+                    worker.store, worker.stats.store
+                );
+                tokio::time::sleep(Duration::from_millis(config.poll_interval_ms)).await;
+            }
+            Err(e) => {
+                error!(
+                    "[{:?}-{:02}] Failed to get pending task: {}",
+                    worker.store, worker.stats.store, e
+                );
+                worker.stats.status = WorkerStatus::Error(e.to_string());
+                tokio::time::sleep(Duration::from_millis(config.retry_delay_ms)).await;
+            }
+        }
+    }
+}
+
+#[tokio::main]
+async fn main() -> AppResult<()> {
+    // Initialize logging with a custom format
+    tracing_subscriber::fmt()
+        .with_env_filter("rust_scraper=debug")
+        .with_thread_ids(true)
+        .with_target(false)
+        .with_file(false)
+        .with_line_number(false)
+        .init();
+
+    // Parse command line arguments
+    let args = Args::parse();
+    
+    info!("Starting workers with the following configuration:");
+    for config in &args.stores {
+        info!(
+            "- Store {:?}: {} workers (poll: {}ms, retries: {}, retry delay: {}ms)",
+            config.store,
+            config.concurrency,
+            config.poll_interval_ms,
+            config.max_retries,
+            config.retry_delay_ms
+        );
+    }
+
     // Load environment variables
     dotenv::dotenv().ok();
 
@@ -42,121 +175,52 @@ async fn initialize_services(store: Store) -> Result<(Arc<dyn CacheService>, Arc
         std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
         std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string()),
     );
-    info!("Connecting to Redis...");
-    let cache_service = Arc::new(RedisCacheService::new(&redis_url).await?) as Arc<dyn CacheService>;
 
-    // Initialize queue service
-    info!("Initializing queue service...");
-    let queue_service = Arc::new(RabbitMQQueue::new().await?) as Arc<dyn QueueService>;
-
-    // Initialize Zyte client
-    info!("Initializing Zyte client...");
+    // Initialize shared services
+    let cache_service: Arc<dyn CacheService> = Arc::new(RedisCacheService::new(&redis_url).await?);
+    let queue_service: Arc<dyn QueueService> = Arc::new(RabbitMQQueue::new().await?);
     let zyte_client = Arc::new(ZyteClient::new()?);
 
-    // Initialize store-specific scraper
-    info!("Initializing {} scraper...", store);
-    let scraper: Arc<dyn ScraperService> = match store {
-        Store::Bauhaus => Arc::new(BauhausScraper::new(zyte_client.clone())),
-        Store::Bricodepot => Arc::new(BricodepotScraper::new(zyte_client.clone())),
-        Store::LeroyMerlin => Arc::new(LeroyScraper::new(zyte_client.clone())),
-    };
+    // Create a worker handle for each store and its specified concurrency
+    let mut handles = Vec::new();
+    
+    for mut config in args.stores {
+        // Update config with CLI args
+        config = config
+            .with_poll_interval(args.poll_interval)
+            .with_max_retries(args.max_retries)
+            .with_retry_delay(args.retry_delay);
 
-    Ok((cache_service, queue_service, scraper))
-}
-
-async fn process_tasks(
-    store: Store,
-    cache_service: Arc<dyn CacheService>,
-    queue_service: Arc<dyn QueueService>,
-    scraper: Arc<dyn ScraperService>,
-    poll_interval: Duration,
-) -> Result<(), Box<dyn std::error::Error>> {
-    info!("Starting {} worker...", store);
-
-    loop {
-        match queue_service.get_pending_task().await {
-            Ok(Some(task)) => {
-                info!("Processing task {} for store {}", task.id, store);
-                
-                // Mark task as processing
-                if let Err(e) = queue_service.mark_task_processing(task.id.clone()).await {
-                    error!("Failed to mark task as processing: {}", e);
-                    continue;
+        info!("Initializing {:?} store workers...", config.store);
+        
+        for _ in 0..config.concurrency {
+            let worker = create_store_worker(
+                &config,
+                cache_service.clone(),
+                queue_service.clone(),
+                zyte_client.clone(),
+            ).await?;
+            
+            let config = config.clone();
+            let store = config.store; // Clone store before moving config
+            let handle = tokio::spawn(async move {
+                if let Err(e) = process_tasks(worker, config).await {
+                    error!(
+                        "[{:?}-{:02}] Worker thread failed: {}",
+                        store, 0, e
+                    );
                 }
-
-                // Process the task
-                match scraper.search_store_products(store, &task.query).await {
-                    Ok(products) => {
-                        info!("Found {} products for task {}", products.len(), task.id);
-                        
-                        // Cache the results
-                        if let Err(e) = cache_service.set_store_products(&task.id, store, &products).await {
-                            error!("Failed to cache results: {}", e);
-                            queue_service.mark_task_failed(task.id, format!("Failed to cache results: {}", e)).await?;
-                            continue;
-                        }
-
-                        // Mark task as completed
-                        queue_service.mark_task_completed(task.id).await?;
-                    }
-                    Err(e) => {
-                        error!("Failed to process task {}: {}", task.id, e);
-                        queue_service.mark_task_failed(task.id, e.to_string()).await?;
-                    }
-                }
-            }
-            Ok(None) => {
-                tokio::time::sleep(poll_interval).await;
-            }
-            Err(e) => {
-                error!("Failed to get pending task: {}", e);
-                tokio::time::sleep(poll_interval).await;
-            }
+            });
+            
+            handles.push(handle);
         }
     }
-}
 
-#[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize logging
-    tracing_subscriber::fmt::init();
-
-    // Parse command line arguments
-    let args = Args::parse();
-    info!("Starting worker for store: {:?}", args.store);
-
-    // Initialize services
-    let (cache_service, queue_service, scraper) = initialize_services(args.store).await?;
-
-    // Start processing tasks
-    let poll_interval = Duration::from_millis(args.poll_interval);
-    
-    let mut handles = Vec::new();
-    for i in 0..args.concurrency {
-        info!("Starting worker thread {}", i);
-        let cache_service = cache_service.clone();
-        let queue_service = queue_service.clone();
-        let scraper = scraper.clone();
-        let store = args.store;
-        
-        let handle = tokio::spawn(async move {
-            if let Err(e) = process_tasks(
-                store,
-                cache_service,
-                queue_service,
-                scraper,
-                poll_interval,
-            ).await {
-                error!("Worker thread {} failed: {}", i, e);
-            }
-        });
-        
-        handles.push(handle);
-    }
+    info!("All workers initialized and running. Press Ctrl+C to stop.");
 
     // Wait for all worker threads
     for handle in handles {
-        handle.await?;
+        handle.await.map_err(|e| AppError::WorkerError(e.to_string()))?;
     }
 
     Ok(())

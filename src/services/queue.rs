@@ -1,336 +1,172 @@
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use lapin::{
     options::*, types::{FieldTable, AMQPValue}, BasicProperties,
-    Connection, ConnectionProperties, Channel,
+    Connection, Channel,
 };
-use tracing::{info, error};
-use redis::{aio::ConnectionManager, AsyncCommands};
-use std::fmt;
+use serde::{Serialize, Deserialize};
+use tracing::info;
+use std::any::Any;
+use futures_lite::StreamExt;
+use uuid::Uuid;
 
-use crate::error::{AppError, AppResult};
+use crate::{
+    error::{AppResult, AppError},
+    models::store::Store,
+};
 
-const MESSAGE_TTL: i32 = 300000; // 5 minutes in milliseconds
-const TASK_EXPIRY: i64 = 300; // 5 minutes in seconds
+const STORE_QUEUE_PREFIX: &str = "store_tasks";
+const DL_EXCHANGE: &str = "dl.store_tasks";
 
-#[derive(Debug, Serialize, Deserialize, Clone, Copy)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskStatus {
-    Pending,
-    Processing,
-    Completed,
-    Failed,
-}
-
-impl fmt::Display for TaskStatus {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            TaskStatus::Pending => write!(f, "pending"),
-            TaskStatus::Processing => write!(f, "processing"),
-            TaskStatus::Completed => write!(f, "completed"),
-            TaskStatus::Failed => write!(f, "failed"),
-        }
-    }
-}
-
-impl TaskStatus {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            TaskStatus::Pending => "pending",
-            TaskStatus::Processing => "processing",
-            TaskStatus::Completed => "completed",
-            TaskStatus::Failed => "failed",
-        }
-    }
-
-    pub fn from_str(s: &str) -> Option<Self> {
-        match s {
-            "pending" => Some(TaskStatus::Pending),
-            "processing" => Some(TaskStatus::Processing),
-            "completed" => Some(TaskStatus::Completed),
-            "failed" => Some(TaskStatus::Failed),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: String,
     pub query: String,
-    pub status: TaskStatus,
-    pub error: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[async_trait]
 pub trait QueueService: Send + Sync {
-    async fn create_task(&self, query: String) -> AppResult<String>;
-    async fn get_task(&self, task_id: &str) -> AppResult<Task>;
-    async fn get_pending_task(&self) -> AppResult<Option<Task>>;
+    async fn setup(&self) -> AppResult<()>;
+    async fn publish(&self, queue: &str, message: Box<dyn Any + Send + Sync>) -> AppResult<()>;
+    async fn consume(&self, queue: &str) -> AppResult<Option<Box<dyn Any + Send + Sync>>>;
     async fn mark_task_completed(&self, task_id: String) -> AppResult<()>;
     async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()>;
+    async fn get_pending_task(&self) -> AppResult<Option<Task>>;
+    async fn create_task(&self, query: String) -> AppResult<String>;
 }
 
 pub struct RabbitMQQueue {
-    /// The RabbitMQ connection. This field is not directly used but must be kept
-    /// to prevent the connection from being dropped. If this field is removed,
-    /// all operations would fail as the connection would be closed.
-    #[allow(dead_code)]
-    connection: Connection,
     channel: Channel,
-    queue_name: String,
-    redis: ConnectionManager,
 }
 
 impl RabbitMQQueue {
-    fn get_task_key(task_id: &str) -> String {
-        format!("task:{}", task_id)
+    pub async fn new() -> AppResult<Self> {
+        let rabbitmq_url = format!(
+            "amqp://{}:{}@{}:{}",
+            std::env::var("RABBITMQ_USER").unwrap_or_else(|_| "guest".to_string()),
+            std::env::var("RABBITMQ_PASSWORD").unwrap_or_else(|_| "guest".to_string()),
+            std::env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
+            std::env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
+        );
+
+        info!("Connecting to RabbitMQ at: {}", rabbitmq_url);
+        let conn = Connection::connect(
+            &rabbitmq_url,
+            Default::default(),
+        ).await.map_err(|e| AppError::QueueError(format!("Failed to connect to RabbitMQ: {}", e)))?;
+
+        let channel = conn.create_channel().await
+            .map_err(|e| AppError::QueueError(format!("Failed to create channel: {}", e)))?;
+
+        Ok(Self { channel })
     }
 
-    pub async fn new() -> AppResult<Self> {
-        // Initialize RabbitMQ connection
-        let addr = std::env::var("AMQP_ADDR")
-            .unwrap_or_else(|_| "amqp://guest:guest@localhost:5672".to_string());
-        
-        info!("Connecting to RabbitMQ at: {}", addr);
-        let connection = Connection::connect(
-            &addr,
-            ConnectionProperties::default()
-                .with_connection_name("scraper-service".into()),
-        ).await?;
-        
-        let channel = connection.create_channel().await?;
-        let queue_name = "scraper_tasks".to_string();
-        
-        // Try to delete existing queues first
-        info!("Cleaning up existing queues...");
-        if let Ok(_) = channel.queue_delete(
-            "scraper_tasks",
-            QueueDeleteOptions::default()
-        ).await {
-            info!("Deleted existing scraper_tasks queue");
-        }
-        if let Ok(_) = channel.queue_delete(
-            "dl.scraper_tasks",
-            QueueDeleteOptions::default()
-        ).await {
-            info!("Deleted existing dl.scraper_tasks queue");
-        }
-        
-        // Declare the dead letter exchange
-        info!("Setting up dead letter exchange...");
-        channel.exchange_declare(
-            "dl.scraper_tasks",
-            lapin::ExchangeKind::Direct,
-            ExchangeDeclareOptions::default(),
-            FieldTable::default(),
-        ).await?;
-        
-        // Declare the dead letter queue
-        info!("Setting up dead letter queue...");
-        channel.queue_declare(
-            "dl.scraper_tasks",
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            FieldTable::default(),
-        ).await?;
-        
-        // Bind the dead letter queue to the exchange
-        channel.queue_bind(
-            "dl.scraper_tasks",
-            "dl.scraper_tasks",
-            "",
-            QueueBindOptions::default(),
-            FieldTable::default(),
-        ).await?;
-        
-        // Create arguments for the main queue with TTL and dead letter config
-        info!("Setting up main queue with TTL...");
-        let mut args = FieldTable::default();
-        args.insert("x-message-ttl".into(), AMQPValue::LongInt(MESSAGE_TTL));
-        args.insert("x-dead-letter-exchange".into(), AMQPValue::LongString("dl.scraper_tasks".into()));
-        
-        // Declare the main queue with the arguments
-        channel.queue_declare(
-            &queue_name,
-            QueueDeclareOptions {
-                durable: true,
-                ..QueueDeclareOptions::default()
-            },
-            args,
-        ).await?;
-        
-        info!("RabbitMQ setup completed successfully");
-        
-        // Initialize Redis connection
-        let redis_url = format!(
-            "redis://{}:{}@{}:{}/",
-            std::env::var("REDIS_USER").unwrap_or_else(|_| "default".to_string()),
-            std::env::var("REDIS_PASSWORD").expect("REDIS_PASSWORD must be set"),
-            std::env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string()),
-            std::env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string()),
-        );
-        
-        let redis = redis::Client::open(redis_url)?
-            .get_tokio_connection_manager().await?;
-        
-        Ok(Self {
-            connection,
-            channel,
-            queue_name,
-            redis,
-        })
-    }
-    
-    async fn cleanup_old_tasks(&self) -> AppResult<()> {
-        let mut conn = self.redis.clone();
-        let now = chrono::Utc::now().timestamp();
-        
-        // Get all tasks
-        let task_keys: Vec<String> = conn.keys("task:*").await?;
-        
-        for key in task_keys {
-            let task_json: Option<String> = conn.get(&key).await?;
-            if let Some(json) = task_json {
-                if let Ok(task) = serde_json::from_str::<Task>(&json) {
-                    if (now - task.created_at.timestamp()) > TASK_EXPIRY {
-                        // Remove expired task
-                        let _: () = conn.del(&key).await?;
-                    }
-                }
-            }
-        }
-        
-        Ok(())
+    pub fn get_store_queue_name(store: &Store) -> String {
+        format!("{}_{}", STORE_QUEUE_PREFIX, store.to_string().to_lowercase())
     }
 }
 
 #[async_trait]
 impl QueueService for RabbitMQQueue {
-    async fn create_task(&self, query: String) -> AppResult<String> {
-        // Clean up old tasks first
-        if let Err(e) = self.cleanup_old_tasks().await {
-            error!("Failed to cleanup old tasks: {}", e);
+    async fn setup(&self) -> AppResult<()> {
+        info!("Setting up store-specific queues...");
+        
+        // Setup queues for each store
+        for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+            let queue_name = Self::get_store_queue_name(store);
+            info!("Setting up {} queue...", queue_name);
+            
+            let mut args = FieldTable::default();
+            args.insert(
+                "x-dead-letter-exchange".into(),
+                AMQPValue::ShortString(DL_EXCHANGE.into())
+            );
+            args.insert("x-message-ttl".into(), 300000_i32.into()); // 5 minutes TTL
+            
+            self.channel.queue_declare(
+                &queue_name,
+                QueueDeclareOptions::default(),
+                args,
+            ).await.map_err(|e| AppError::QueueError(format!("Failed to declare queue {}: {}", queue_name, e)))?;
         }
         
-        let task_id = uuid::Uuid::new_v4().to_string();
-        let task = Task {
-            id: task_id.clone(),
-            query,
-            status: TaskStatus::Pending,
-            error: None,
-            created_at: chrono::Utc::now(),
-            updated_at: chrono::Utc::now(),
-        };
-        
-        // Store task in Redis with expiration
-        let mut conn = self.redis.clone();
-        let task_key = Self::get_task_key(&task_id);
-        let task_json = serde_json::to_string(&task)?;
-        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await?;
-        
-        // Publish to RabbitMQ with TTL
+        info!("RabbitMQ setup completed successfully");
+        Ok(())
+    }
+
+    async fn publish(&self, queue: &str, message: Box<dyn Any + Send + Sync>) -> AppResult<()> {
+        let message = message.downcast_ref::<Vec<u8>>()
+            .ok_or_else(|| AppError::QueueError("Failed to downcast message to bytes".into()))?;
+
         self.channel.basic_publish(
             "",
-            &self.queue_name,
+            queue,
             BasicPublishOptions::default(),
-            task_id.as_bytes(),
-            BasicProperties::default()
-                .with_expiration(MESSAGE_TTL.to_string().into()),
-        ).await?;
-        
-        Ok(task_id)
+            message,
+            BasicProperties::default(),
+        ).await.map_err(|e| AppError::QueueError(format!("Failed to publish message: {}", e)))?;
+
+        Ok(())
     }
-    
-    async fn get_task(&self, task_id: &str) -> AppResult<Task> {
-        let mut redis = self.redis.clone();
-        let task_key = Self::get_task_key(task_id);
-        
-        let task_json: Option<String> = redis.get(&task_key).await?;
-        match task_json {
-            Some(json) => {
-                let task: Task = serde_json::from_str(&json)?;
-                Ok(task)
+
+    async fn consume(&self, queue: &str) -> AppResult<Option<Box<dyn Any + Send + Sync>>> {
+        let mut consumer = self.channel.basic_consume(
+            queue,
+            "",
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        ).await.map_err(|e| AppError::QueueError(format!("Failed to create consumer: {}", e)))?;
+
+        if let Some(delivery) = consumer.next().await {
+            match delivery {
+                Ok(delivery) => {
+                    let message: Box<dyn Any + Send + Sync> = Box::new(delivery.data);
+
+                    self.channel.basic_ack(
+                        delivery.delivery_tag,
+                        BasicAckOptions::default(),
+                    ).await.map_err(|e| AppError::QueueError(format!("Failed to acknowledge message: {}", e)))?;
+
+                    Ok(Some(message))
+                }
+                Err(e) => Err(AppError::QueueError(format!("Failed to get delivery: {}", e))),
             }
-            None => Err(AppError::NotFound(format!("Task {} not found", task_id)))
-        }
-    }
-    
-    async fn get_pending_task(&self) -> AppResult<Option<Task>> {
-        if let Some(delivery) = self.channel.basic_get(
-            &self.queue_name,
-            BasicGetOptions::default(),
-        ).await? {
-            let task_id = String::from_utf8_lossy(&delivery.data);
-            let task = self.get_task(&task_id).await?;
-            
-            // Update task status to Processing
-            let mut updated_task = task.clone();
-            updated_task.status = TaskStatus::Processing;
-            updated_task.updated_at = chrono::Utc::now();
-            
-            let mut redis = self.redis.clone();
-            let task_key = Self::get_task_key(&task.id);
-            let task_json = serde_json::to_string(&updated_task)?;
-            let _: () = redis.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await?;
-            
-            self.channel.basic_ack(
-                delivery.delivery_tag,
-                BasicAckOptions::default(),
-            ).await?;
-            
-            Ok(Some(updated_task))
         } else {
             Ok(None)
         }
     }
-    
-    async fn mark_task_completed(&self, task_id: String) -> AppResult<()> {
-        let mut redis = self.redis.clone();
-        let task_key = Self::get_task_key(&task_id);
-        
-        // Get current task
-        let task_json: Option<String> = redis.get(&task_key).await?;
-        if let Some(json) = task_json {
-            let mut task: Task = serde_json::from_str(&json)?;
-            task.status = TaskStatus::Completed;
-            task.updated_at = chrono::Utc::now();
-            
-            // Update task in Redis
-            let updated_json = serde_json::to_string(&task)?;
-            let _: () = redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
-            
-            info!("Task completed: {}", task_id);
-            Ok(())
-        } else {
-            Err(AppError::NotFound(format!("Task {} not found", task_id)))
-        }
+
+    async fn mark_task_completed(&self, _task_id: String) -> AppResult<()> {
+        // For now, we don't need to do anything since we already ack the message
+        Ok(())
     }
-    
-    async fn mark_task_failed(&self, task_id: String, error: String) -> AppResult<()> {
-        let mut redis = self.redis.clone();
-        let task_key = Self::get_task_key(&task_id);
-        
-        // Get current task
-        let task_json: Option<String> = redis.get(&task_key).await?;
-        if let Some(json) = task_json {
-            let mut task: Task = serde_json::from_str(&json)?;
-            task.status = TaskStatus::Failed;
-            task.error = Some(error.clone());
-            task.updated_at = chrono::Utc::now();
-            
-            // Update task in Redis
-            let updated_json = serde_json::to_string(&task)?;
-            let _: () = redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
-            
-            error!("Task failed: {} - {}", task_id, error);
-            Ok(())
-        } else {
-            Err(AppError::NotFound(format!("Task {} not found", task_id)))
-        }
+
+    async fn mark_task_failed(&self, _task_id: String, _error: String) -> AppResult<()> {
+        // For now, we don't need to do anything since we already ack the message
+        Ok(())
     }
-} 
+
+    async fn get_pending_task(&self) -> AppResult<Option<Task>> {
+        if let Some(message) = self.consume(STORE_QUEUE_PREFIX).await? {
+            if let Ok(query) = message.downcast::<String>() {
+                return Ok(Some(Task {
+                    id: Uuid::new_v4().to_string(),
+                    query: *query,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    async fn create_task(&self, query: String) -> AppResult<String> {
+        let task_id = Uuid::new_v4().to_string();
+        
+        // Create a task for each store
+        for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+            let queue_name = Self::get_store_queue_name(store);
+            let message = Box::new(query.clone());
+            self.publish(&queue_name, message).await?;
+        }
+        
+        Ok(task_id)
+    }
+}

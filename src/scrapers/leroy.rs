@@ -51,8 +51,9 @@ impl LeroyScraper {
         price_text
             .trim()
             .replace('€', "")
-            .replace(",", ".")
-            .parse()
+            .replace(',', ".")
+            .trim()
+            .parse::<f64>()
             .ok()
     }
 
@@ -64,61 +65,58 @@ impl LeroyScraper {
             .collect::<String>();
 
         debug!("Found original price text: {}", price_text);
-        
+
         price_text
             .trim()
             .replace('€', "")
-            .replace(",", ".")
-            .parse()
+            .replace(',', ".")
+            .trim()
+            .parse::<f64>()
             .ok()
     }
 
     fn extract_image(&self, product: ElementRef) -> Option<String> {
         product
             .select(self.selectors.get("image")?)
-            .next()
-            .and_then(|el| el.value().attr("src"))
+            .next()?
+            .value()
+            .attr("src")
             .map(|s| s.to_string())
     }
 
     fn extract_url(&self, product: ElementRef) -> Option<String> {
         product
             .select(self.selectors.get("url")?)
-            .next()
-            .and_then(|el| el.value().attr("href"))
-            .map(|s| s.to_string())
+            .next()?
+            .value()
+            .attr("href")
+            .map(|s| format!("{}{}", self.base_url, s))
     }
 
     fn extract_name(&self, product: ElementRef) -> Option<String> {
         product
             .select(self.selectors.get("title")?)
-            .next()
-            .map(|el| el.text().collect::<String>())
-            .map(|s| s.trim().to_string())
+            .next()?
+            .text()
+            .collect::<String>()
+            .trim()
+            .to_string()
+            .into()
     }
 
     fn extract_product_info(&self, product: ElementRef) -> Option<Product> {
         let name = self.extract_name(product)?;
-        debug!("Found product name: {}", name);
-
-        let current_price = if let Some(price) = self.extract_price(product) {
-            ProductPrice {
-                amount: price,
-                currency: "EUR".to_string(),
-            }
-        } else {
-            return None;
-        };
-
-        let original_price = self.extract_original_price(product).map(|price| ProductPrice {
-            amount: price,
-            currency: "EUR".to_string(),
-        });
-
-        let image_url = self.extract_image(product)?;
         let url = self.extract_url(product)?;
+        let image_url = self.extract_image(product)?;
+        let current_price = self.extract_price(product)?;
+        let original_price = self.extract_original_price(product);
 
-        Some(Product::new(
+        let current_price = ProductPrice::new(current_price, "EUR".to_string()).ok()?;
+        let original_price = original_price.map(|price| 
+            ProductPrice::new(price, "EUR".to_string()).ok()
+        ).flatten();
+
+        Product::new(
             name,
             String::new(), // Empty description for now
             current_price,
@@ -127,17 +125,12 @@ impl LeroyScraper {
             image_url,
             Store::LeroyMerlin,
             None, // No metadata for now
-        ).unwrap()) // Safe to unwrap since we provide all required fields
+        ).ok()
     }
-    
-    #[allow(dead_code)]
+
     fn has_next_page(&self, document: &Html) -> bool {
         if let Some(next_page_selector) = self.selectors.get("next_page") {
-            document
-                .select(next_page_selector)
-                .next()
-                .map(|el| el.value().attr("href"))
-                .is_some()
+            document.select(next_page_selector).next().is_some()
         } else {
             false
         }
@@ -163,9 +156,10 @@ impl BaseScraper for LeroyScraper {
     }
 
     async fn get_product_data(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
-        let search_url = format!("{}{}", self.get_search_url(), query);
-        let html = self.client.get(&search_url).await?;
+        let search_url = format!("{}{}", self.get_search_url(), urlencoding::encode(query));
+        info!("Fetching Leroy Merlin products from URL: {}", search_url);
         
+        let html = self.client.get_rendered_html(&search_url).await?;
         let document = Html::parse_document(&html);
         let mut products = Vec::new();
 
@@ -183,13 +177,17 @@ impl BaseScraper for LeroyScraper {
             }
         }
         
-        info!("Successfully extracted {} products", products.len());
+        info!("Successfully extracted {} products from Leroy Merlin", products.len());
         Ok(products)
     }
 }
 
 #[async_trait]
 impl ScraperService for LeroyScraper {
+    fn get_store(&self) -> Store {
+        Store::LeroyMerlin
+    }
+
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
         let html = self.client.get(url).await?;
         let document = Html::parse_document(&html);

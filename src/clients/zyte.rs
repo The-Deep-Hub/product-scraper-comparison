@@ -1,8 +1,9 @@
 use reqwest::Client;
 use serde_json::{json, Value};
-use tracing::{info, error};
+use tracing::{error};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::sleep;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone)]
@@ -52,57 +53,14 @@ impl ZyteClient {
                         e
                     );
 
+                    last_error = Some(e);
                     sleep(Duration::from_millis(backoff_ms)).await;
                     retries += 1;
-                    last_error = Some(e);
                 }
             }
         }
 
         Err(last_error.unwrap_or_else(|| AppError::BadRequest("Max retries exceeded".into())))
-    }
-
-    pub async fn get_rendered_html(&self, url: &str) -> AppResult<String> {
-        info!("Fetching page content from URL: {}", url);
-        
-        self.make_request_with_retry(|| async {
-            let payload = json!({
-                "url": url,
-                "browserHtml": true
-            });
-
-            let response = self.client
-                .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
-                .json(&payload)
-                .send()
-                .await?;
-
-            if !response.status().is_success() {
-                let error_msg = format!(
-                    "Zyte API request failed with status code: {}",
-                    response.status()
-                );
-                error!("{}", error_msg);
-                return Err(AppError::BadRequest(error_msg));
-            }
-
-            let json_response = response.json::<Value>().await?;
-            let rendered_html = json_response.get("browserHtml")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    let msg = "Rendered HTML is missing in Zyte API response.";
-                    error!("{}", msg);
-                    AppError::BadRequest(msg.into())
-                })?;
-
-            Ok(rendered_html.to_string())
-        })
-        .await
-    }
-
-    pub async fn get(&self, url: &str) -> AppResult<String> {
-        self.get_rendered_html(url).await
     }
 
     pub async fn get_api_response(&self, url: &str, options: Option<HashMap<String, Value>>) -> AppResult<Value> {
@@ -119,9 +77,12 @@ impl ZyteClient {
                 }
             }
 
+            // Base64 encode the API key with a colon
+            let auth = BASE64.encode(format!("{}:", self.api_key));
+
             let response = self.client
                 .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
+                .header("Authorization", format!("Basic {}", auth))
                 .json(&payload)
                 .send()
                 .await?;
@@ -140,58 +101,24 @@ impl ZyteClient {
         .await
     }
 
-    pub async fn get_rendered_html_with_options(&self, url: &str, options: Option<HashMap<String, Value>>) -> AppResult<String> {
-        info!("Fetching page content from URL: {}", url);
+    pub async fn get_rendered_html(&self, url: &str) -> AppResult<String> {
+        let mut options = HashMap::new();
+        options.insert("browserHtml".to_string(), json!(true));
         
-        self.make_request_with_retry(|| async {
-            let mut payload = json!({
-                "url": url,
-                "httpResponseBody": true,
-                "httpResponseHeaders": true,
-                "browser": {
-                    "render": true
-                }
-            });
+        self.get_rendered_html_with_options(url, Some(options)).await
+    }
 
-            if let Some(opts) = &options {
-                if let Some(obj) = payload.as_object_mut() {
-                    for (k, v) in opts {
-                        obj.insert(k.clone(), v.clone());
-                    }
-                }
-            }
+    pub async fn get(&self, url: &str) -> AppResult<String> {
+        self.get_rendered_html(url).await
+    }
 
-            let response = self.client
-                .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
-                .json(&payload)
-                .send()
-                .await?;
+    pub async fn get_rendered_html_with_options(&self, url: &str, options: Option<HashMap<String, Value>>) -> AppResult<String> {
+        let response = self.get_api_response(url, options).await?;
 
-            if !response.status().is_success() {
-                let error_msg = format!(
-                    "Zyte API request failed with status code: {}",
-                    response.status()
-                );
-                error!("{}", error_msg);
-                return Err(AppError::BadRequest(error_msg));
-            }
-
-            let json_response = response.json::<Value>().await?;
-            
-            // According to Zyte docs, the rendered HTML is in browser.html when using browser.render
-            let rendered_html = json_response
-                .get("browser")
-                .and_then(|b| b.get("html"))
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    let msg = "Rendered HTML is missing in Zyte API response.";
-                    error!("{}", msg);
-                    AppError::BadRequest(msg.into())
-                })?;
-
-            Ok(rendered_html.to_string())
-        })
-        .await
+        if let Some(html) = response.get("browserHtml").and_then(|v| v.as_str()) {
+            Ok(html.to_string())
+        } else {
+            Err(AppError::BadRequest("No HTML content in response".into()))
+        }
     }
 }

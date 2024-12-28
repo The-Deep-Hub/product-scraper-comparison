@@ -7,6 +7,5 @@ pub mod middleware;
 pub mod models;
 pub mod scrapers;
 pub mod services;
-pub mod utils;
 
 pub use error::{AppError, AppResult};

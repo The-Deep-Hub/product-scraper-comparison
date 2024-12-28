@@ -109,8 +109,11 @@ impl BaseScraper for BauhausScraper {
         let search_url = format!("{}?text={}&user_search=true", self.get_search_url(), urlencoding::encode(query));
         info!("Fetching Bauhaus products from URL: {}", search_url);
         
-        let html = self.fetch_search_results(&self.client, &search_url).await?;
+        let html = self.client.get(&search_url).await?;
         debug!("Received HTML content length: {}", html.len());
+        
+        // Log the entire HTML for debugging
+        debug!("Full HTML response: {}", html);
         
         // Log the first part of the HTML to see what we're getting
         if html.len() > 0 {
@@ -140,6 +143,10 @@ impl BaseScraper for BauhausScraper {
         }
         debug!("Found classes on page: {:?}", unique_classes);
         
+        // Try to find any elements that look like product cards
+        let all_divs = document.select(&Selector::parse("div").unwrap()).count();
+        debug!("Total number of div elements: {}", all_divs);
+        
         let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
         info!("Found {} product cards on the page", product_cards.len());
         
@@ -147,10 +154,11 @@ impl BaseScraper for BauhausScraper {
         if product_cards.is_empty() {
             warn!("No products found with primary selector, checking alternative patterns");
             let alt_selectors = [
-                "div.product-tile",
-                ".product-list__item",
-                ".product-grid-item",
-                "[data-product-tile]"
+                "div.product-list-tile",
+                "div.product-list-tile__info__line",
+                "div.product-list-tile__price-wrapper",
+                "div[class*='product']",
+                "div[class*='tile']"
             ];
             
             for selector in alt_selectors.iter() {
@@ -326,8 +334,12 @@ impl BaseScraper for BauhausScraper {
 
 #[async_trait]
 impl ScraperService for BauhausScraper {
+    fn get_store(&self) -> Store {
+        Store::Bauhaus
+    }
+
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
-        let html = self.fetch_search_results(&self.client, url).await?;
+        let html = self.client.get(url).await?;
         let document = Html::parse_document(&html);
         
         let product_card = document
@@ -336,7 +348,7 @@ impl ScraperService for BauhausScraper {
             .ok_or_else(|| AppError::BadRequest("Product not found".into()))?;
             
         self.extract_product_info(&product_card)
-            .ok_or_else(|| AppError::BadRequest("Failed to extract product info".into()))
+            .ok_or_else(|| AppError::BadRequest("Failed to extract product details".into()))
     }
 
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
