@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use scraper::{Html, Selector};
 use serde_json::{Value, json};
 use std::collections::HashMap;
-use tracing::info;
+use tracing::{debug, info, warn};
 use urlencoding;
 
 use crate::{
@@ -31,6 +31,7 @@ impl LeroyScraper {
     }
 
     fn extract_products_from_html(&self, html: &str) -> Vec<Value> {
+        debug!("Extracting products from HTML");
         let document = Html::parse_document(html);
         let product_selector = Selector::parse("li.product-thumbnail").expect("Failed to parse product selector");
         let mut products = Vec::new();
@@ -40,22 +41,29 @@ impl LeroyScraper {
 
             // Extract name
             if let Some(name_el) = product.select(&Selector::parse("span.a-designation__label").unwrap()).next() {
-                product_data.insert("name".to_string(), json!(name_el.text().collect::<String>().trim()));
+                let name = name_el.text().collect::<String>().trim().to_string();
+                debug!("Found product: {}", name);
+                product_data.insert("name".to_string(), json!(name));
             }
 
             // Extract current price
             if let Some(price_el) = product.select(&Selector::parse("span.js-main-price").unwrap()).next() {
-                product_data.insert("js-main-price".to_string(), json!(price_el.text().collect::<String>().trim()));
+                let price = price_el.text().collect::<String>().trim().to_string();
+                debug!("Found price: {}", price);
+                product_data.insert("js-main-price".to_string(), json!(price));
             }
 
             // Extract original price
             if let Some(original_price_el) = product.select(&Selector::parse("span.km-price__from-without-offer").unwrap()).next() {
-                product_data.insert("km-price__from-without-offer".to_string(), json!(original_price_el.text().collect::<String>().trim()));
+                let original_price = original_price_el.text().collect::<String>().trim().to_string();
+                debug!("Found original price: {}", original_price);
+                product_data.insert("km-price__from-without-offer".to_string(), json!(original_price));
             }
 
             // Extract URL
             if let Some(url_el) = product.select(&Selector::parse("a.a-designation").unwrap()).next() {
                 if let Some(href) = url_el.value().attr("href") {
+                    debug!("Found URL: {}", href);
                     product_data.insert("url".to_string(), json!(href));
                 }
             }
@@ -63,18 +71,21 @@ impl LeroyScraper {
             // Extract image URL
             if let Some(img_el) = product.select(&Selector::parse("img.a-illustration__img").unwrap()).next() {
                 if let Some(src) = img_el.value().attr("src") {
+                    debug!("Found image URL: {}", src);
                     product_data.insert("image".to_string(), json!(src));
                 }
             }
 
             // Extract SKU from data-reflm attribute
             if let Some(sku) = product.value().attr("data-reflm") {
+                debug!("Found SKU: {}", sku);
                 product_data.insert("sku".to_string(), json!(sku));
             }
 
             // Extract description from alt attribute of image
             if let Some(img_el) = product.select(&Selector::parse("img.a-illustration__img").unwrap()).next() {
                 if let Some(alt) = img_el.value().attr("alt") {
+                    debug!("Found description: {}", alt);
                     product_data.insert("description".to_string(), json!(alt));
                 }
             }
@@ -84,10 +95,12 @@ impl LeroyScraper {
             }
         }
 
+        info!("Extracted {} products from HTML", products.len());
         products
     }
 
     fn extract_product_from_html(&self, html: &str) -> Option<Value> {
+        debug!("Extracting product details from HTML");
         let document = Html::parse_document(html);
         let script_selector = Selector::parse("script[type='application/ld+json']")
             .expect("Failed to parse script selector");
@@ -97,17 +110,20 @@ impl LeroyScraper {
                 if let Ok(data) = serde_json::from_str::<Value>(content) {
                     // Check if this is product data (should have @type: "Product")
                     if data.get("@type").and_then(|t| t.as_str()) == Some("Product") {
+                        debug!("Found product JSON-LD data");
                         return Some(data);
                     }
                 }
             }
         }
 
+        warn!("No product JSON-LD data found");
         None
     }
 
     fn parse_product_details(&self, product_data: &Value) -> Option<Product> {
         let name = product_data.get("name")?.as_str()?.to_string();
+        debug!("Parsing product details for: {}", name);
         
         // Extract current price from offers
         let current_price = product_data
@@ -118,7 +134,9 @@ impl LeroyScraper {
             .map(|amount| ProductPrice {
                 amount,
                 currency: "EUR".to_string(),
-            })?;  // Required field
+            })?;
+
+        debug!("Current price: {}", current_price.format());
 
         // Get original price if available
         let original_price = product_data
@@ -131,17 +149,25 @@ impl LeroyScraper {
                 currency: "EUR".to_string(),
             });
 
+        if let Some(ref op) = original_price {
+            debug!("Original price: {}", op.format());
+        }
+
         // Get URL (required)
         let url = product_data
             .get("url")
             .and_then(|u| u.as_str())
             .map(|u| u.to_string())?;
 
+        debug!("Product URL: {}", url);
+
         // Get image URL (required)
         let image_url = product_data
             .get("image")
             .and_then(|i| i.as_str())
             .map(|i| i.to_string())?;
+
+        debug!("Image URL: {}", image_url);
 
         // Get description (required, with fallback)
         let description = product_data
@@ -155,6 +181,7 @@ impl LeroyScraper {
         
         // Add SKU to metadata
         if let Some(sku) = product_data.get("sku").and_then(|s| s.as_str()) {
+            debug!("Found SKU: {}", sku);
             metadata.insert("sku".to_string(), sku.to_string());
         }
 
@@ -172,6 +199,7 @@ impl LeroyScraper {
 
     fn parse_product(&self, product_data: &Value) -> Option<Product> {
         let name = product_data.get("name")?.as_str()?.to_string();
+        debug!("Parsing product: {}", name);
         
         // Extract current price from the main price element
         let current_price = product_data
@@ -188,6 +216,8 @@ impl LeroyScraper {
                 currency: "EUR".to_string(),
             })?;
 
+        debug!("Current price: {}", current_price.format());
+
         // Extract original price from the crossed price
         let original_price = product_data
             .get("km-price__from-without-offer")
@@ -203,11 +233,17 @@ impl LeroyScraper {
                 currency: "EUR".to_string(),
             });
 
+        if let Some(ref op) = original_price {
+            debug!("Original price: {}", op.format());
+        }
+
         // Build URL
         let url = product_data
             .get("url")
             .and_then(|u| u.as_str())
             .map(|u| if u.starts_with("http") { u.to_string() } else { format!("{}{}", self.base_url, u) })?;
+
+        debug!("Product URL: {}", url);
 
         // Build image URL
         let image_url = product_data
@@ -221,6 +257,8 @@ impl LeroyScraper {
                     .map(|sku| format!("{}{}/media.jpg", BASE_IMAGE_URL, sku))
             })?;
 
+        debug!("Image URL: {}", image_url);
+
         // Get description
         let description = product_data
             .get("description")
@@ -233,6 +271,7 @@ impl LeroyScraper {
         
         // Add SKU to metadata
         if let Some(sku) = product_data.get("sku").and_then(|s| s.as_str()) {
+            debug!("Found SKU: {}", sku);
             metadata.insert("sku".to_string(), sku.to_string());
         }
 
@@ -249,6 +288,7 @@ impl LeroyScraper {
     }
 
     async fn scrape_url(&self, url: &str) -> AppResult<String> {
+        debug!("Scraping URL: {}", url);
         let html = self.client.get_rendered_html(url).await?;
         Ok(html)
     }
@@ -264,28 +304,42 @@ impl ScraperService for LeroyScraper {
         // Try to extract product data from LD+JSON
         if let Some(product_data) = self.extract_product_from_html(&html) {
             if let Some(product) = self.parse_product_details(&product_data) {
+                info!("Successfully extracted product details: {}", product.name);
                 return Ok(product);
             }
         }
         
+        warn!("Failed to extract product details from URL: {}", url);
         Err(AppError::BadRequest("Product data not found".into()))
     }
 
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
+        info!("Searching Leroy Merlin for query: {}", query);
         let url = format!("{}/search?q={}", self.base_url, urlencoding::encode(query));
-        info!("Searching Leroy Merlin with URL: {}", url);
+        debug!("Search URL: {}", url);
 
+        // First get all the HTML
         let html = self.scrape_url(&url).await?;
+        
+        // Extract all products data
         let raw_products = self.extract_products_from_html(&html);
+        info!("Found {} raw products", raw_products.len());
         
-        info!("Found {} raw products from Leroy Merlin", raw_products.len());
-        
-        let products: Vec<Product> = raw_products
-            .iter()
-            .filter_map(|product_data| self.parse_product(product_data))
-            .collect();
+        // Now process all products
+        let mut products = Vec::new();
+        for product_data in raw_products {
+            match self.parse_product(&product_data) {
+                Some(product) => {
+                    debug!("Successfully parsed product: {}", product.name);
+                    products.push(product);
+                }
+                None => {
+                    warn!("Failed to parse product from data");
+                }
+            }
+        }
 
-        info!("Successfully parsed {} products from Leroy Merlin", products.len());
+        info!("Successfully parsed {} products", products.len());
         Ok(products)
     }
 
