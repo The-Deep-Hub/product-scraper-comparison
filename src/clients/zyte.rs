@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use tracing::{info, error};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 use tokio::time::sleep;
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use crate::error::{AppError, AppResult};
 
 #[derive(Debug, Clone)]
@@ -73,7 +74,7 @@ impl ZyteClient {
 
             let response = self.client
                 .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
+                .header("Authorization", format!("Basic {}", BASE64.encode(&format!("{}:", self.api_key))))
                 .json(&payload)
                 .send()
                 .await?;
@@ -121,7 +122,7 @@ impl ZyteClient {
 
             let response = self.client
                 .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
+                .header("Authorization", format!("Basic {}", BASE64.encode(&format!("{}:", self.api_key))))
                 .json(&payload)
                 .send()
                 .await?;
@@ -163,7 +164,7 @@ impl ZyteClient {
 
             let response = self.client
                 .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", self.api_key))
+                .header("Authorization", format!("Basic {}", BASE64.encode(&format!("{}:", self.api_key))))
                 .json(&payload)
                 .send()
                 .await?;
