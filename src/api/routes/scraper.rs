@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::collections::HashMap;
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use tokio::time::{timeout, Duration};
@@ -35,7 +36,7 @@ pub struct SearchResponse {
 #[derive(Debug, Serialize)]
 pub struct TaskStatusResponse {
     status: String,
-    products: Option<Vec<Product>>,
+    stores: Option<HashMap<String, Vec<Product>>>,
     error: Option<String>,
 }
 
@@ -59,22 +60,26 @@ pub async fn search_products(
     }
     
     // Try to get from cache first
-    match cache_service.get_search_results(&request.query).await {
-        Ok(Some(products)) => {
-            info!("Cache hit for query: {}", request.query);
-            info!("Returning {} products from cache", products.len());
-            return Ok(HttpResponse::Ok()
-                .content_type("application/json")
-                .json(products));
+    if let Ok(Some(products)) = cache_service.get_search_results(&request.query).await {
+        info!("Cache hit, grouping {} products by store", products.len());
+        
+        // Group products by store
+        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+        for product in products {
+            stores
+                .entry(product.store.to_string().to_lowercase())
+                .or_insert_with(Vec::new)
+                .push(product);
         }
-        Ok(None) => {
-            info!("Cache miss for query: {}", request.query);
-        }
-        Err(e) => {
-            error!("Cache error: {}", e);
-            return Err(AppError::InternalServerError(format!("Cache error: {}", e)));
-        }
+        
+        return Ok(HttpResponse::Ok().json(TaskStatusResponse {
+            status: "completed".to_string(),
+            stores: Some(stores),
+            error: None,
+        }));
     }
+    
+    info!("Cache miss for query: {}", request.query);
     
     // Create main task
     let main_task = MainTask::new(request.query.clone(), request.store);
@@ -102,24 +107,24 @@ pub async fn search_products(
                 Ok(Some(task)) => {
                     if task.is_complete() {
                         // Combine all products from store results
-                        let mut all_products = Vec::new();
-                        for products in task.store_results.values() {
-                            all_products.extend(products.clone());
+                        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+                        for (store, products) in task.store_results {
+                            stores.entry(store.to_string().to_lowercase()).or_insert_with(Vec::new).extend(products);
                         }
                         
                         // Cache combined results
-                        if !all_products.is_empty() {
-                            if let Err(e) = cache_service.set_search_results(&request.query, &all_products).await {
+                        if !stores.is_empty() {
+                            if let Err(e) = cache_service.set_search_results(&request.query, &stores.values().cloned().flatten().collect::<Vec<_>>()).await {
                                 error!("Failed to cache combined results: {}", e);
                             }
                         }
                         
-                        info!("Task completed, returning {} products", all_products.len());
+                        info!("Task completed, returning {} stores", stores.len());
                         return Ok(HttpResponse::Ok()
                             .content_type("application/json")
                             .json(TaskStatusResponse {
                                 status: "completed".to_string(),
-                                products: Some(all_products),
+                                stores: Some(stores),
                                 error: None,
                             }));
                     } else if task.status == TaskStatus::Failed {
@@ -128,7 +133,7 @@ pub async fn search_products(
                             .content_type("application/json")
                             .json(TaskStatusResponse {
                                 status: "failed".to_string(),
-                                products: None,
+                                stores: None,
                                 error: task.error,
                             }));
                     }
@@ -141,7 +146,7 @@ pub async fn search_products(
                         .content_type("application/json")
                         .json(TaskStatusResponse {
                             status: "error".to_string(),
-                            products: None,
+                            stores: None,
                             error: Some("Task not found".to_string()),
                         }));
                 }
@@ -151,7 +156,7 @@ pub async fn search_products(
                         .content_type("application/json")
                         .json(TaskStatusResponse {
                             status: "error".to_string(),
-                            products: None,
+                            stores: None,
                             error: Some(format!("Failed to check task status: {}", e)),
                         }));
                 }
@@ -182,26 +187,26 @@ pub async fn get_task_status(
         .ok_or_else(|| AppError::NotFound("Task not found".to_string()))?;
     
     let response = if task.is_complete() {
-        let mut all_products = Vec::new();
-        for products in task.store_results.values() {
-            all_products.extend(products.clone());
+        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+        for (store, products) in task.store_results {
+            stores.entry(store.to_string().to_lowercase()).or_insert_with(Vec::new).extend(products);
         }
         
         TaskStatusResponse {
             status: "completed".to_string(),
-            products: Some(all_products),
+            stores: Some(stores),
             error: None,
         }
     } else if task.status == TaskStatus::Failed {
         TaskStatusResponse {
             status: "failed".to_string(),
-            products: None,
+            stores: None,
             error: task.error,
         }
     } else {
         TaskStatusResponse {
             status: task.status.to_string().to_lowercase(),
-            products: None,
+            stores: None,
             error: None,
         }
     };
@@ -227,4 +232,4 @@ pub async fn get_product_details(
     }
     
     Ok(HttpResponse::Ok().json(product))
-} 
+}
