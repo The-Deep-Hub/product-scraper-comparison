@@ -1,4 +1,3 @@
-use actix_web::HttpResponse;
 use serde::Serialize;
 
 #[derive(Debug, Serialize)]

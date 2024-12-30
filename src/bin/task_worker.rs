@@ -1,21 +1,19 @@
-use rust_scraper::{
+   use rust_scraper::{
     clients::zyte::ZyteClient,
     services::{
         cache::{CacheService, RedisCacheService},
         queue::{QueueService, RabbitMQQueue},
-        scraper::{CombinedScraperService, ScraperService},
+        scraper::ScraperService,
     },
-    models::store::Store,
     scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
 };
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use std::time::Duration;
 use tokio::time::sleep;
 use futures::StreamExt;
-use futures_util::TryStreamExt;
 use lapin::{
-    options::*, types::FieldTable, BasicProperties,
-    Connection, ConnectionProperties, Channel, Consumer,
+    options::*, types::FieldTable,
+    Connection, ConnectionProperties,
 };
 use std::sync::Arc;
 
@@ -71,9 +69,9 @@ async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueSe
     // Initialize Zyte client and scrapers
     let zyte_client = ZyteClient::new()?;
     let scrapers: Vec<Arc<dyn ScraperService>> = vec![
-        Arc::new(LeroyScraper::new(zyte_client.clone())),
+        Arc::new(LeroyScraper::new(zyte_client.clone())?),
+        Arc::new(BricodepotScraper::new(zyte_client.clone())),
         Arc::new(BauhausScraper::new(zyte_client.clone())),
-        Arc::new(BricodepotScraper::new(zyte_client)),
     ];
     
     Ok((cache_service, queue_service, scrapers))

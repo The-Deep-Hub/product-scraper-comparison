@@ -5,8 +5,7 @@ use lapin::{
     Connection, ConnectionProperties, Channel,
 };
 use tracing::{info, error};
-use redis::{aio::ConnectionManager, AsyncCommands, FromRedisValue, ToRedisArgs};
-use std::time::Duration;
+use redis::{aio::ConnectionManager, AsyncCommands};
 use std::fmt;
 
 use crate::error::{AppError, AppResult};
@@ -75,6 +74,10 @@ pub trait QueueService: Send + Sync {
 }
 
 pub struct RabbitMQQueue {
+    /// The RabbitMQ connection. This field is not directly used but must be kept
+    /// to prevent the connection from being dropped. If this field is removed,
+    /// all operations would fail as the connection would be closed.
+    #[allow(dead_code)]
     connection: Connection,
     channel: Channel,
     queue_name: String,
@@ -196,7 +199,7 @@ impl RabbitMQQueue {
                 if let Ok(task) = serde_json::from_str::<Task>(&json) {
                     if (now - task.created_at.timestamp()) > TASK_EXPIRY {
                         // Remove expired task
-                        conn.del(&key).await?;
+                        let _: () = conn.del(&key).await?;
                     }
                 }
             }
@@ -226,11 +229,9 @@ impl QueueService for RabbitMQQueue {
         
         // Store task in Redis with expiration
         let mut conn = self.redis.clone();
-        conn.set_ex(
-            Self::get_task_key(&task_id),
-            serde_json::to_string(&task)?,
-            TASK_EXPIRY as usize,
-        ).await?;
+        let task_key = Self::get_task_key(&task_id);
+        let task_json = serde_json::to_string(&task)?;
+        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await?;
         
         // Publish to RabbitMQ with TTL
         self.channel.basic_publish(
@@ -275,7 +276,7 @@ impl QueueService for RabbitMQQueue {
             let mut redis = self.redis.clone();
             let task_key = Self::get_task_key(&task.id);
             let task_json = serde_json::to_string(&updated_task)?;
-            redis.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await?;
+            let _: () = redis.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await?;
             
             self.channel.basic_ack(
                 delivery.delivery_tag,
@@ -301,7 +302,7 @@ impl QueueService for RabbitMQQueue {
             
             // Update task in Redis
             let updated_json = serde_json::to_string(&task)?;
-            redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
+            let _: () = redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
             
             info!("Task completed: {}", task_id);
             Ok(())
@@ -324,7 +325,7 @@ impl QueueService for RabbitMQQueue {
             
             // Update task in Redis
             let updated_json = serde_json::to_string(&task)?;
-            redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
+            let _: () = redis.set_ex(&task_key, updated_json, TASK_EXPIRY as usize).await?;
             
             error!("Task failed: {} - {}", task_id, error);
             Ok(())

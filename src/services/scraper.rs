@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::{
-    error::{AppError, AppResult},
+    error::AppResult,
     models::{product::Product, store::Store},
     scrapers::{BauhausScraper, BricodepotScraper, LeroyScraper},
     services::{cache::CacheService, queue::QueueService},
@@ -22,6 +22,12 @@ pub struct CombinedScraperService {
 }
 
 impl CombinedScraperService {
+
+/// Creates a new CombinedScraperService with the following scrapers in order:
+/// 1. Leroy Merlin scraper
+/// 2. Bauhaus scraper
+/// 3. Bricodepot scraper
+
     pub fn new(
         leroy_scraper: LeroyScraper,
         bauhaus_scraper: BauhausScraper,

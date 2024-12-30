@@ -1,20 +1,14 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector, ElementRef};
+use scraper::{Html, ElementRef, Selector};
 use std::collections::HashMap;
 use tracing::{debug, info, warn};
 use urlencoding;
-
-use crate::{
-    error::{AppError, AppResult},
-    models::{
-        product::{Product, ProductPrice},
-        store::Store,
-    },
-    clients::zyte::ZyteClient,
-    services::scraper::ScraperService,
-};
-
-use super::base::BaseScraper;
+use crate::models::{Product, Store};
+use crate::scrapers::base::BaseScraper;
+use crate::error::{AppError, AppResult};
+use crate::clients::zyte::ZyteClient;
+use crate::services::scraper::ScraperService;
+use serde_json;
 
 pub struct BauhausScraper {
     store_name: String,
@@ -24,6 +18,7 @@ pub struct BauhausScraper {
     selectors: Selectors,
 }
 
+#[derive(Debug)]
 struct Selectors {
     product_card: Selector,
     name: Selector,
@@ -112,21 +107,6 @@ impl BaseScraper for BauhausScraper {
         let html = self.fetch_search_results(&self.client, &search_url).await?;
         debug!("Received HTML content length: {}", html.len());
         
-        // Log the first part of the HTML to see what we're getting
-        if html.len() > 0 {
-            debug!("First 500 chars of HTML: {}", &html[..500.min(html.len())]);
-            
-            // Check for common error indicators
-            if html.contains("error-page") || html.contains("error-message") {
-                warn!("Found error indicators in HTML response");
-            }
-            if html.contains("captcha") || html.contains("robot") {
-                warn!("Possible bot detection/captcha found");
-            }
-        } else {
-            warn!("Received empty HTML response");
-        }
-        
         let document = Html::parse_document(&html);
         
         // Log all unique class names to help debug selectors
@@ -143,34 +123,11 @@ impl BaseScraper for BauhausScraper {
         let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
         info!("Found {} product cards on the page", product_cards.len());
         
-        // If no products found, try alternative selectors
-        if product_cards.is_empty() {
-            warn!("No products found with primary selector, checking alternative patterns");
-            let alt_selectors = [
-                "div.product-tile",
-                ".product-list__item",
-                ".product-grid-item",
-                "[data-product-tile]"
-            ];
-            
-            for selector in alt_selectors.iter() {
-                if let Ok(alt_selector) = Selector::parse(selector) {
-                    let count = document.select(&alt_selector).count();
-                    debug!("Alternative selector '{}' found {} elements", selector, count);
-                }
-            }
-        }
-        
         let mut products = Vec::new();
         for card in product_cards.into_iter().take(num_products) {
-            match self.extract_product_info(&card) {
-                Some(product) => {
-                    info!("Successfully extracted product: {}", product.name);
-                    products.push(product);
-                }
-                None => {
-                    warn!("Failed to extract product info from card");
-                }
+            if let Some(product) = self.extract_product_info(&card) {
+                info!("Successfully extracted product: {}", product.name);
+                products.push(product);
             }
         }
         
@@ -179,132 +136,74 @@ impl BaseScraper for BauhausScraper {
     }
 
     fn extract_product_info(&self, card: &ElementRef) -> Option<Product> {
-        // Extract name
         let name = card
             .select(&self.selectors.name)
             .next()
             .map(|el| el.text().collect::<String>())
             .map(|s| s.trim().to_string())?;
-        debug!("Extracted name: {}", name);
+        debug!("Found product name: {}", name);
 
-        // Extract current price
-        let current_price = self.extract_price(card).map(|amount| {
-            debug!("Extracted current price: {}", amount);
-            ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            }
-        })?;
+        let price = self.extract_price(card)?;
+        debug!("Extracted price: {}", price);
 
-        // Extract original price if available
-        let original_price = self.extract_original_price(card).map(|amount| {
-            debug!("Extracted original price: {}", amount);
-            ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            }
-        });
+        let original_price = self.extract_original_price(card);
+        if let Some(op) = original_price {
+            debug!("Extracted original price: {}", op);
+        }
 
-        // Extract description
-        let description = card
-            .select(&self.selectors.description)
-            .next()
-            .map(|el| el.text().collect::<String>())
-            .unwrap_or_else(|| "No description available".to_string());
-        debug!("Extracted description: {}", description);
-
-        // Get product code from the card
-        let product_code = card
-            .value()
-            .attr("data-product-code")
-            .map(|s| s.to_string())?;
-        debug!("Found product code: {}", product_code);
-
-        // Find the matching JSON-LD script
-        let json_ld = {
-            let scripts = Selector::parse("script[type='application/ld+json']").unwrap();
-            let fragment = card.html();
-            let document = Html::parse_fragment(&fragment);
-            
-            document
-                .select(&scripts)
-                .find_map(|script| {
-                    let json_text = script.text().collect::<String>();
-                    if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_text) {
-                        if let Some(sku) = json.get("sku").and_then(|s| s.as_str()) {
-                            if sku == product_code {
-                                return Some(json);
-                            }
+        // Extract image URL from JSON-LD script
+        let script_selector = Selector::parse("script[type='application/ld+json']").unwrap();
+        let image_url = card
+            .next_siblings()
+            .find_map(|sibling| {
+                sibling.value().as_element().and_then(|element| {
+                    if element.name() == "script" && element.attr("type") == Some("application/ld+json") {
+                        let element_ref = ElementRef::wrap(sibling).unwrap();
+                        let json_text = element_ref.text().collect::<String>();
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&json_text) {
+                            return json.get("image").and_then(|i| i.as_str()).map(String::from);
                         }
                     }
                     None
                 })
-        };
+            })
+            .ok_or_else(|| {
+                warn!("Failed to extract image URL from JSON-LD for product {}", name);
+                AppError::BadRequest("Missing image URL".into())
+            })
+            .ok()?;
 
-        // Extract image URL from JSON-LD
-        let image_url = if let Some(ref json) = json_ld {
-            json.get("image")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        } else {
-            // Fallback to img tag
-            card.select(&Selector::parse("img[src]").unwrap())
-                .next()
-                .and_then(|img| img.value().attr("src"))
-                .map(ToString::to_string)
-                .unwrap_or_default()
-        };
-        debug!("Extracted image URL: {}", image_url);
+        debug!("Extracted image URL from JSON-LD: {}", image_url);
 
-        // Build URL from JSON-LD or fallback to href
-        let url = if let Some(ref json) = json_ld {
-            json.get("url")
-                .and_then(|v| v.as_str())
-                .map(ToString::to_string)
-                .unwrap_or_else(|| {
-                    card.select(&Selector::parse("a[href]").unwrap())
-                        .next()
-                        .and_then(|a| a.value().attr("href"))
-                        .map(|href| {
-                            if href.starts_with("http") {
-                                href.to_string()
-                            } else {
-                                format!("{}{}", self.base_url, href)
-                            }
-                        })
-                        .unwrap_or_default()
-                })
-        } else {
-            card.select(&Selector::parse("a[href]").unwrap())
-                .next()
-                .and_then(|a| a.value().attr("href"))
-                .map(|href| {
-                    if href.starts_with("http") {
-                        href.to_string()
-                    } else {
-                        format!("{}{}", self.base_url, href)
-                    }
-                })
-                .unwrap_or_default()
-        };
-        debug!("Built full URL: {}", url);
+        // Extract URL with fallback
+        let url = card
+            .select(&self.selectors.url)
+            .next()
+            .and_then(|a| a.value().attr("href"))
+            .map(|href| {
+                if href.starts_with("http") {
+                    href.to_string()
+                } else {
+                    format!("{}{}", self.base_url, href)
+                }
+            })
+            .ok_or_else(|| {
+                warn!("Failed to extract URL from HTML for product {}", name);
+                AppError::BadRequest("Missing product URL".into())
+            })
+            .ok()?;
+        debug!("Extracted product URL: {}", url);
 
-        // Build metadata
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "bauhaus".to_string());
-        metadata.insert("sku".to_string(), product_code);
-
-        Some(Product {
+        // Create product with validation
+        Product::new(
             name,
-            description,
-            current_price,
+            String::new(), // Empty description for now
+            price,
             original_price,
             url,
             image_url,
-            store: Store::Bauhaus,
-            metadata: Some(metadata),
-        })
+            Store::Bauhaus,
+        ).ok()
     }
 }
 

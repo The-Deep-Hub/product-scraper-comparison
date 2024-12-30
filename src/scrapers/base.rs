@@ -1,6 +1,5 @@
 use async_trait::async_trait;
-use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::info;
 
 use crate::{
     error::AppResult,
