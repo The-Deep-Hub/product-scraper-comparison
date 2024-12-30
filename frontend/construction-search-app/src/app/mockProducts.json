@@ -1,0 +1,110 @@
+[
+  {
+    "name": "Martillo Clásico",
+    "store": "leroymerlin",
+    "url": "https://www.leroymerlin.es/product/martillo-clasico",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 10.99,
+    "original_price": null,
+    "description": "Martillo tradicional con mango de madera."
+  },
+  {
+    "name": "Martillo Antivibración",
+    "store": "bauhaus",
+    "url": "https://www.bauhaus.es/product/martillo-antivibracion",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 12.50,
+    "original_price": 13.99,
+    "description": "Martillo con tecnología antivibración."
+  },
+  {
+    "name": "Martillo de Acero",
+    "store": "bricodepot",
+    "url": "https://www.bricodepot.es/product/martillo-acero",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 15.99,
+    "original_price": 18.00,
+    "description": "Martillo de acero inoxidable con mango ergonómico."
+  },
+  {
+    "name": "Martillo Liviano",
+    "store": "leroymerlin",
+    "url": "https://www.leroymerlin.es/product/martillo-liviano",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 8.50,
+    "original_price": 10.00,
+    "description": "Martillo liviano para tareas sencillas."
+  },
+  {
+    "name": "Taladro Inalámbrico",
+    "store": "leroymerlin",
+    "url": "https://www.leroymerlin.es/product/taladro-inalambrico",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 60.99,
+    "original_price": 69.99,
+    "description": "Taladro inalámbrico con batería de litio."
+  },
+  {
+    "name": "Taladro Compacto",
+    "store": "bauhaus",
+    "url": "https://www.bauhaus.es/product/taladro-compacto",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 65.00,
+    "original_price": 70.00,
+    "description": "Taladro compacto y ligero."
+  },
+  {
+    "name": "Pintura Blanca Mate",
+    "store": "leroymerlin",
+    "url": "https://www.leroymerlin.es/product/pintura-blanca",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 22.99,
+    "original_price": 24.99,
+    "description": "Pintura blanca mate para interiores."
+  },
+  {
+    "name": "Pintura Lavable",
+    "store": "bauhaus",
+    "url": "https://www.bauhaus.es/product/pintura-lavable",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 24.50,
+    "original_price": null,
+    "description": "No description available."
+  },
+  {
+    "name": "Pintura Satinada",
+    "store": "bricodepot",
+    "url": "https://www.bricodepot.es/product/pintura-satinada",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 26.99,
+    "original_price": null,
+    "description": "Pintura satinada para acabados elegantes."
+  },
+  {
+    "name": "Set de 4 Sillas Rojas",
+    "store": "bricodepot",
+    "url": "https://www.bricodepot.es/well-home-set-de-4-sillas-43x47x79cm-bas-rojas-245caa42",
+    "image_url": "https://media.adeo.com/media/93921509/media.jpg",
+    "current_price": 129.8,
+    "original_price": 150.0,
+    "description": "Set de 4 sillas rojas con diseño moderno."
+  },
+  {
+    "name": "Banco Acolchado Comfivo",
+    "store": "leroymerlin",
+    "url": "https://www.leroymerlin.es/product/banco-acolchado-comfivo",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 204.0,
+    "original_price": null,
+    "description": "Banco acolchado, diseño moderno y cómodo."
+  },
+  {
+    "name": "Mesa Extensible",
+    "store": "bauhaus",
+    "url": "https://www.bauhaus.es/product/mesa-extensible",
+    "image_url": "https://via.placeholder.com/150",
+    "current_price": 299.99,
+    "original_price": 350.0,
+    "description": "Mesa extensible para comedor."
+  }
+]

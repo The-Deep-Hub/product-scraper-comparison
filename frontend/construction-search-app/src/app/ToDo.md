@@ -5,7 +5,6 @@
 - [x] **Finalize JSON structure** for the endpoint and document it for the backend developer.
 - [x] **Share API expectations** and required error handling with the backend team.
 - [x] **Test simulated API integration** with the frontend.
-- [ ] **Optional Not Priority**: Add pagination handling for page and limit parameters in the endpoint and adjust frontend behavior accordingly.
 
 ---
 
