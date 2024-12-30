@@ -1,9 +1,8 @@
 use async_trait::async_trait;
 use scraper::{Html, ElementRef, Selector};
 use serde_json::Value;
-use std::collections::HashMap;
-use tracing::{debug, info, warn, error};
-use crate::models::{Product, ProductPrice, Store, Selectors};
+use tracing::{debug, info, warn};
+use crate::models::{Product, Store};
 use crate::scrapers::base::BaseScraper;
 use crate::error::{AppError, AppResult};
 use crate::clients::zyte::ZyteClient;
@@ -71,20 +70,11 @@ impl LeroyScraper {
                 warn!("Failed to extract price for product: {}", name);
                 0.0
             });
-        
-        let current_price = ProductPrice {
-            amount: price,
-            currency: "EUR".to_string(),
-        };
 
         // Extract original price
         let original_price = product_data
             .get("displayed_price")
-            .and_then(|p| p.as_f64())
-            .map(|amount| ProductPrice {
-                amount,
-                currency: "EUR".to_string(),
-            });
+            .and_then(|p| p.as_f64());
 
         // Build URLs
         let sku = match product_data.get("sku").and_then(|s| s.as_str()) {
@@ -105,25 +95,15 @@ impl LeroyScraper {
 
         let image_url = format!("{}{}/media.jpg", BASE_IMAGE_URL, sku);
 
-        match Product::new(
-            name.clone(),
-            String::new(),
-            current_price,
+        Product::new(
+            name,
+            String::new(), // Empty description for now
+            price,
             original_price,
             url,
             image_url,
             Store::LeroyMerlin,
-            None,
-        ) {
-            Ok(product) => {
-                debug!("Successfully parsed product: {}", name);
-                Some(product)
-            }
-            Err(e) => {
-                warn!("Failed to create product {}: {}", name, e);
-                None
-            }
-        }
+        ).ok()
     }
 }
 

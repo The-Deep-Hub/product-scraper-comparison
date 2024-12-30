@@ -1,8 +1,11 @@
+pub mod auth;
 pub mod product;
 pub mod store;
-pub mod task;
 pub mod selectors;
+pub mod task;
 
-pub use product::{Product, ProductPrice};
+pub use auth::*;
+pub use product::Product;
 pub use store::Store;
 pub use selectors::Selectors;
+pub use task::*;

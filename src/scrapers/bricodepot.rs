@@ -1,28 +1,13 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector, ElementRef};
-use std::collections::HashMap;
+use scraper::{Html, ElementRef, Selector};
 use tracing::{debug, info, warn};
+use crate::models::{Product, Store};
+use crate::scrapers::base::BaseScraper;
+use crate::error::{AppError, AppResult};
+use crate::clients::zyte::ZyteClient;
+use crate::services::scraper::ScraperService;
 
-use crate::{
-    error::{AppError, AppResult},
-    models::{
-        product::{Product, ProductPrice},
-        store::Store,
-    },
-    clients::zyte::ZyteClient,
-    services::scraper::ScraperService,
-};
-
-use super::base::BaseScraper;
-
-pub struct BricodepotScraper {
-    store_name: String,
-    base_url: String,
-    search_url: String,
-    client: ZyteClient,
-    selectors: Selectors,
-}
-
+#[derive(Debug)]
 struct Selectors {
     product_card: Selector,
     name: Selector,
@@ -32,6 +17,14 @@ struct Selectors {
     price_decimal: Selector,
     original_price: Selector,
     image: Selector,
+}
+
+pub struct BricodepotScraper {
+    store_name: String,
+    base_url: String,
+    search_url: String,
+    client: ZyteClient,
+    selectors: Selectors,
 }
 
 impl BricodepotScraper {
@@ -130,6 +123,28 @@ impl BricodepotScraper {
         debug!("Using fallback image URL: {:?}", url);
         url
     }
+
+    fn extract_name(&self, card: &ElementRef) -> Option<String> {
+        let name = card
+            .select(&self.selectors.name)
+            .next()?
+            .text()
+            .collect::<String>()
+            .trim()
+            .to_string();
+        debug!("Extracted name: {}", name);
+        Some(name)
+    }
+
+    fn extract_url(&self, card: &ElementRef) -> Option<String> {
+        let url = card.value().attr("href")?.to_string();
+        debug!("Extracted URL: {}", url);
+        Some(url)
+    }
+
+    fn extract_image(&self, card: &ElementRef) -> Option<String> {
+        self.extract_image_url(card)
+    }
 }
 
 #[async_trait]
@@ -171,51 +186,29 @@ impl BaseScraper for BricodepotScraper {
     }
 
     fn extract_product_info(&self, card: &ElementRef) -> Option<Product> {
-        debug!("Extracting product info from card");
-        // Extract name
-        let name = card
-            .select(&self.selectors.name)
-            .next()?
-            .text()
-            .collect::<String>()
-            .trim()
-            .to_string();
-        debug!("Extracted name: {}", name);
+        let name = self.extract_name(card)?;
+        debug!("Found product name: {}", name);
 
-        // Extract URL
-        let url = card.value().attr("href")?.to_string();
-        debug!("Extracted URL: {}", url);
+        let price = self.extract_price(card)?;
+        debug!("Extracted price: {}", price);
 
-        // Extract current price
-        let current_price = self.extract_price(card).map(|amount| ProductPrice {
-            amount,
-            currency: "EUR".to_string(),
-        })?;
+        let original_price = self.extract_original_price(card);
+        if let Some(op) = original_price {
+            debug!("Extracted original price: {}", op);
+        }
 
-        // Extract original price if available
-        let original_price = self.extract_original_price(card).map(|amount| ProductPrice {
-            amount,
-            currency: "EUR".to_string(),
-        });
+        let image_url = self.extract_image(card)?;
+        let url = self.extract_url(card)?;
 
-        // Extract image URL
-        let image_url = self.extract_image_url(card)
-            .unwrap_or_default();
-
-        // Build metadata
-        let mut metadata = HashMap::new();
-        metadata.insert("source".to_string(), "bricodepot".to_string());
-
-        Some(Product {
+        Product::new(
             name,
-            description: "No description available".to_string(), // Bricodepot doesn't provide descriptions in search results
-            current_price,
+            String::new(), // Empty description for now
+            price,
             original_price,
             url,
             image_url,
-            store: Store::Bricodepot,
-            metadata: Some(metadata),
-        })
+            Store::Bricodepot,
+        ).ok()
     }
 }
 
