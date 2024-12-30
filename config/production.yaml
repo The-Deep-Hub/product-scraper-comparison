@@ -1,0 +1,16 @@
+environment: production
+
+server:
+  host: "0.0.0.0"  # Allow external connections in production
+  port: 8080
+
+database:
+  mongodb_uri: ""  # Set via environment variable
+  redis_host: ""   # Set via environment variable
+  redis_port: 6379
+  redis_user: ""   # Set via environment variable
+  redis_password: ""  # Set via environment variable
+
+queue:
+  amqp_addr: ""  # Set via environment variable
+  prefetch_count: 10  # Higher prefetch count for production

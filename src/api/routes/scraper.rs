@@ -12,6 +12,7 @@ use crate::{
         store::Store,
         task::{MainTask, TaskStatus},
     },
+    core::app_state::AppState,
     services::{
         cache::CacheService,
         queue::QueueService,
@@ -46,9 +47,7 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 #[post("/search")]
 pub async fn search_products(
     request: web::Json<SearchRequest>,
-    cache_service: web::Data<Arc<dyn CacheService>>,
-    _queue_service: web::Data<Arc<dyn QueueService>>,
-    task_splitter: web::Data<Arc<dyn TaskSplitterService>>,
+    app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
     info!("Received search request: {:?}", request);
     info!("Query: {}, Store: {:?}", request.query, request.store);
@@ -60,7 +59,7 @@ pub async fn search_products(
     }
     
     // Try to get from cache first
-    if let Ok(Some(products)) = cache_service.get_search_results(&request.query).await {
+    if let Ok(Some(products)) = app_state.cache_service.get_search_results(&request.query).await {
         info!("Cache hit, grouping {} products by store", products.len());
         
         // Group products by store
@@ -85,7 +84,7 @@ pub async fn search_products(
     let main_task = MainTask::new(request.query.clone(), request.store);
     info!("Created main task with ID: {}", main_task.id);
     
-    if let Err(e) = cache_service.set_main_task(&main_task).await {
+    if let Err(e) = app_state.cache_service.set_main_task(&main_task).await {
         error!("Failed to set main task in cache: {}", e);
         return Err(AppError::InternalServerError("Failed to create task".into()));
     }
@@ -93,7 +92,7 @@ pub async fn search_products(
     info!("Created main task {} for query: {}", main_task.id, main_task.query);
     
     // Split task into store-specific tasks
-    if let Err(e) = task_splitter.split_task(&main_task).await {
+    if let Err(e) = app_state.task_splitter.split_task(&main_task).await {
         error!("Failed to split task: {}", e);
         return Err(AppError::InternalServerError("Failed to split task".into()));
     }
@@ -103,7 +102,7 @@ pub async fn search_products(
     // Wait for task completion with timeout
     match timeout(TASK_TIMEOUT, async {
         loop {
-            match cache_service.get_main_task(&main_task.id).await {
+            match app_state.cache_service.get_main_task(&main_task.id).await {
                 Ok(Some(task)) => {
                     if task.is_complete() {
                         // Combine all products from store results
@@ -114,7 +113,7 @@ pub async fn search_products(
                         
                         // Cache combined results
                         if !stores.is_empty() {
-                            if let Err(e) = cache_service.set_search_results(&request.query, &stores.values().cloned().flatten().collect::<Vec<_>>()).await {
+                            if let Err(e) = app_state.cache_service.set_search_results(&request.query, &stores.values().cloned().flatten().collect::<Vec<_>>()).await {
                                 error!("Failed to cache combined results: {}", e);
                             }
                         }
@@ -181,9 +180,9 @@ pub async fn search_products(
 #[get("/task/{task_id}")]
 pub async fn get_task_status(
     task_id: web::Path<String>,
-    cache_service: web::Data<Arc<dyn CacheService>>,
+    app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
-    let task = cache_service.get_main_task(&task_id).await?
+    let task = app_state.cache_service.get_main_task(&task_id).await?
         .ok_or_else(|| AppError::NotFound("Task not found".to_string()))?;
     
     let response = if task.is_complete() {
@@ -217,19 +216,20 @@ pub async fn get_task_status(
 #[get("/product")]
 pub async fn get_product_details(
     url: web::Query<String>,
-    scraper_service: web::Data<Arc<dyn ScraperService>>,
-    cache_service: web::Data<Arc<dyn CacheService>>,
+    app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
     // Try to get from cache first
-    if let Ok(Some(product)) = cache_service.get_product_details(&url).await {
+    if let Ok(Some(product)) = app_state.cache_service.get_product_details(&url).await {
         return Ok(HttpResponse::Ok().json(product));
     }
-    
-    // If not in cache, get from scraper and cache it
-    let product = scraper_service.get_product_details(&url).await?;
-    if let Err(e) = cache_service.set_product_details(&product).await {
+
+    // If not in cache, scrape it
+    let product = app_state.scraper_service.get_product_details(&url).await?;
+
+    // Cache the result
+    if let Err(e) = app_state.cache_service.set_product_details(&product).await {
         error!("Failed to cache product details: {}", e);
     }
-    
+
     Ok(HttpResponse::Ok().json(product))
 }

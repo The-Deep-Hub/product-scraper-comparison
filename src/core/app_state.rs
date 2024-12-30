@@ -3,6 +3,7 @@ use anyhow::Result;
 use tracing::info;
 
 use crate::{
+    config::AppConfig,
     clients::zyte::ZyteClient,
     services::{
         cache::{CacheService, RedisCacheService},
@@ -15,6 +16,7 @@ use crate::{
 
 #[derive(Clone)]
 pub struct AppState {
+    pub config: Arc<AppConfig>,
     pub cache_service: Arc<dyn CacheService>,
     pub queue_service: Arc<dyn QueueService>,
     pub scraper_service: Arc<dyn ScraperService>,
@@ -23,13 +25,16 @@ pub struct AppState {
 
 impl AppState {
     pub async fn new() -> Result<Self> {
+        // Load configuration
+        let config = Arc::new(AppConfig::new()?);
+        
         // Initialize Redis
-        let redis_url = Self::build_redis_url()?;
+        let redis_url = config.as_ref().redis_url();
         info!("Connecting to Redis at: {}", Self::mask_password(&redis_url));
         let cache_service = Arc::new(RedisCacheService::new(&redis_url).await?) as Arc<dyn CacheService>;
         
         // Initialize RabbitMQ
-        let amqp_url = std::env::var("AMQP_ADDR").expect("AMQP_ADDR must be set");
+        let amqp_url = config.as_ref().amqp_url();
         let conn = lapin::Connection::connect(
             &amqp_url,
             lapin::ConnectionProperties::default(),
@@ -51,6 +56,7 @@ impl AppState {
         let scraper_service = Self::init_scraper_service(zyte_client, &redis_url).await?;
 
         Ok(Self {
+            config,
             cache_service,
             queue_service,
             scraper_service,

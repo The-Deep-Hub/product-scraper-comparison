@@ -225,6 +225,10 @@ impl AppConfig {
         Ok(())
     }
 
+    pub fn amqp_url(&self) -> String {
+        self.queue.amqp_addr.clone()
+    }
+
     pub fn redis_url(&self) -> String {
         format!(
             "redis://{}:{}@{}:{}/",

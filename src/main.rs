@@ -22,22 +22,15 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to initialize application state");
 
-    let server_config = &app_state.config.server;
-    debug!("Server configuration: {:?}", server_config);
-    info!("Starting HTTP server on {}:{}", server_config.host, server_config.port);
+    let server_addr = app_state.config.server_addr();
+    info!("Starting HTTP server at {}", server_addr);
 
-    let bind_addr = (server_config.host.as_str(), server_config.port);
-    debug!("Binding to address: {:?}", bind_addr);
-    
     HttpServer::new(move || {
         App::new()
-            .app_data(web::Data::new(Arc::clone(&app_state.cache_service)))
-            .app_data(web::Data::new(Arc::clone(&app_state.queue_service)))
-            .app_data(web::Data::new(Arc::clone(&app_state.scraper_service)))
-            .app_data(web::Data::new(Arc::clone(&app_state.task_splitter)))
+            .app_data(web::Data::new(app_state.clone()))
             .configure(routes::configure)
     })
-    .bind(bind_addr)?
+    .bind(server_addr)?
     .run()
     .await
 }
