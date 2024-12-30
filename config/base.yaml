@@ -1,0 +1,47 @@
+environment: development
+
+server:
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 8080
+
+database:
+  mongodb_uri: ""
+  redis_host: "localhost"
+  redis_port: 6379
+  redis_user: "default"
+  redis_password: ""
+
+queue:
+  amqp_addr: ""
+  prefetch_count: 1
+
+zyte:
+  api_key: ""
+  endpoint: "https://api.zyte.com/v1/extract"
+  concurrent_requests: 5
+  request_timeout: 30
+
+stores:
+  leroy:
+    name: "Leroy Merlin"
+    base_url: "https://www.leroymerlin.es"
+    search_endpoint: "/search"
+    api:
+      api_type: "zyte"
+      api_key: ""
+  
+  bricodepot:
+    name: "Bricodepot"
+    base_url: "https://www.bricodepot.es"
+    search_endpoint: "/productos/buscar"
+    api:
+      api_type: "zyte"
+      api_key: ""
+
+  bauhaus:
+    name: "Bauhaus"
+    base_url: "https://www.bauhaus.es"
+    search_endpoint: "/search"
+    api:
+      api_type: "zyte"
+      api_key: ""

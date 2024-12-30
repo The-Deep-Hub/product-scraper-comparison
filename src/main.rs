@@ -1,5 +1,5 @@
 use actix_web::{web, App, HttpServer};
-use tracing::info;
+use tracing::{info, debug};
 use std::sync::Arc;
 
 use rust_scraper::{
@@ -22,7 +22,13 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Failed to initialize application state");
 
-    info!("Starting HTTP server");
+    let server_config = &app_state.config.server;
+    debug!("Server configuration: {:?}", server_config);
+    info!("Starting HTTP server on {}:{}", server_config.host, server_config.port);
+
+    let bind_addr = (server_config.host.as_str(), server_config.port);
+    debug!("Binding to address: {:?}", bind_addr);
+    
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(Arc::clone(&app_state.cache_service)))
@@ -31,7 +37,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(web::Data::new(Arc::clone(&app_state.task_splitter)))
             .configure(routes::configure)
     })
-    .bind("127.0.0.1:8080")?
+    .bind(bind_addr)?
     .run()
     .await
 }
