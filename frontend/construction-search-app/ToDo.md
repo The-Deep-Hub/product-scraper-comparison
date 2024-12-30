@@ -21,8 +21,8 @@
 ## Styling and UI Enhancements
 - [ ] **Apply a cohesive color palette** to the frontend.
 - [ ] **Add animations** for:
-  - [ ] Buttons.
-  - [ ] Result cards (hover effect with background change).
+  - [x] Buttons.
+  - [x] Result cards (hover effect with background change).
 - [ ] **Fix result card height**:
   - [ ] Set a fixed height for cards to avoid layout inconsistencies.
   - [ ] Ensure cards look consistent across all results.
