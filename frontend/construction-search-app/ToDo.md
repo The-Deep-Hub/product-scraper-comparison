@@ -1,9 +1,9 @@
 # To-Do List
 
 ## Priority: Endpoint Simulation
-- [ ] **Define and simulate `/api/products` endpoint** in the frontend.
-- [ ] **Finalize JSON structure** for the endpoint and document it for the backend developer.
-- [ ] **Share API expectations** and required error handling with the backend team.
+- [x] **Define and simulate `/api/products` endpoint** in the frontend.
+- [x] **Finalize JSON structure** for the endpoint and document it for the backend developer.
+- [x] **Share API expectations** and required error handling with the backend team.
 - [ ] **Test simulated API integration** with the frontend.
 
 ---

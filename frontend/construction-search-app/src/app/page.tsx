@@ -2,8 +2,11 @@
 
 import { useState, useEffect } from "react";
 import { Range } from "react-range";
-import mockData from "./mockProducts.json";
 
+
+// Removed `mockData` import as data is now fetched from `/api/products`.
+
+// Type definition for Product, ensuring consistency with the API response
 type Product = {
   name: string; // Product name
   store: string; // Store name (e.g., "leroy", "bricodepot")
@@ -26,56 +29,68 @@ type Product = {
 };
 
 export default function Home() {
-  // State for the search query
-  const [query, setQuery] = useState("");
-  // State for the price range filter
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]);
-  // State for the filtered products to display
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);
-  // State to store the maximum price from the mock data
-  const [maxPrice, setMaxPrice] = useState(100);
-  // State to check if the search button has been clicked
-  const [searchClicked, setSearchClicked] = useState(false);
+  // State for managing products fetched from the backend
+  const [products, setProducts] = useState<Product[]>([]); // All products fetched from API
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]); // Products filtered by search query and price range
+  const [query, setQuery] = useState<string>(""); // User's search query
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]); // Selected price range
+  const [error, setError] = useState<string | null>(null); // Error message state
+  const [loading, setLoading] = useState<boolean>(true); // Loading state to manage fetch status
+  const [maxPrice, setMaxPrice] = useState<number>(100); // Maximum price from fetched products
+  const [searchClicked, setSearchClicked] = useState<boolean>(false); // **Fixed: State to track search action**
 
-  // On component mount, calculate the maximum price from the mock data
+  // Fetch data from API on component mount
   useEffect(() => {
-    const highestPrice = Math.ceil(
-      Math.max(...mockData.map((product) => product.current_price.amount))
-    );
-    setMaxPrice(highestPrice);
-    setPriceRange([0, highestPrice]);
-  }, []);
+    const fetchProducts = async () => {
+      try {
+        const response = await fetch("/api/products"); // GET request to fetch product data
+        if (!response.ok) throw new Error("Failed to fetch products"); // Handle non-200 status codes
 
-  // Function to filter products based on the search query and price range
+        const data: Product[] = await response.json(); // Parse JSON response
+        setProducts(data); // Store fetched products
+        setFilteredProducts(data); // Initialize filtered products with all fetched data
+
+        const maxPrice = Math.max(...data.map((p) => p.current_price.amount)); // Calculate maximum price
+        setPriceRange([0, maxPrice]); // Set initial price range
+        setMaxPrice(maxPrice); // Set maximum price for slider
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "An unknown error occurred"); // Set error message for display
+      } finally {
+        setLoading(false); // Stop loading indicator
+      }
+    };
+
+    fetchProducts();
+  }, []); // Run only once on mount
+
+
+  // Function to filter products based on search query and price range
   const filterProducts = (query: string, range: [number, number]) => {
-    const filtered = mockData.filter(
+    const filtered = products.filter(
       (product) =>
         product.name.toLowerCase().includes(query.toLowerCase()) &&
         product.current_price.amount >= range[0] &&
         product.current_price.amount <= range[1]
     );
-    setFilteredProducts(filtered);
+    setFilteredProducts(filtered); // Comment: Update filtered products
   };
-  
 
   // Handle search button click
   const handleSearch = () => {
-    setSearchClicked(true);
-    filterProducts(query, priceRange);
+    setSearchClicked(true); // **Fixed: Update searchClicked state**
+    filterProducts(query, priceRange); // Filter products based on current search and range
   };
 
   // Handle Enter key press in the search bar
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") {
-      handleSearch();
-    }
+    if (e.key === "Enter") handleSearch(); // Comment: Trigger search on Enter key press
   };
 
   // Handle changes in the price range slider
   const handlePriceRangeChange = (values: number[]) => {
-    const updatedRange = [values[0], values[1]] as [number, number];
-    setPriceRange(updatedRange);
-    filterProducts(query, updatedRange); // Update results in real-time
+    const updatedRange: [number, number] = [values[0], values[1]];
+    setPriceRange(updatedRange); // Comment: Update selected price range
+    filterProducts(query, updatedRange); // Comment: Re-filter products in real-time
   };
 
   // Format price for display in currency format
@@ -83,8 +98,13 @@ export default function Home() {
     new Intl.NumberFormat("es-ES", {
       style: "currency",
       currency: "EUR",
-    }).format(price);
+    }).format(price); // Comment: Format price as per Spanish locale
 
+  if (loading) return <p>Loading...</p>; // Comment: Display loading message while data is being fetched
+  if (error) return <p>Error: {error}</p>; // Comment: Display error message if fetching fails
+
+
+  // Component rendering
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4">
       {/* Filters Panel */}
@@ -98,7 +118,7 @@ export default function Home() {
             min={0}
             max={maxPrice}
             values={priceRange}
-            onChange={handlePriceRangeChange} // Update results in real-time
+            onChange={handlePriceRangeChange}
             renderTrack={({ props, children }) => (
               <div
                 {...props}
@@ -120,13 +140,13 @@ export default function Home() {
             renderThumb={({ props, isDragged }) => (
               <div
                 {...props}
-                className={`w-4 h-4 ${isDragged ? "bg-blue-700" : "bg-blue-500"
-                  } rounded-full shadow-md`}
+                className={`w-4 h-4 ${
+                  isDragged ? "bg-blue-700" : "bg-blue-500"
+                } rounded-full shadow-md`}
               />
             )}
           />
-
-          {/* Display selected price range */}
+          {/* Selected Price Range */}
           <div className="flex justify-between text-sm mt-2">
             <span>Mín: {formatPrice(priceRange[0])}</span>
             <span>Máx: {formatPrice(priceRange[1])}</span>
@@ -144,11 +164,11 @@ export default function Home() {
               placeholder="Buscar productos..."
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown} // Handle Enter key
+              onKeyDown={handleKeyDown}
               className="border p-2 flex-1 rounded-md"
             />
             <button
-              onClick={handleSearch} // Trigger search
+              onClick={handleSearch}
               className="bg-blue-500 text-white px-4 py-2 rounded-md"
             >
               Buscar
@@ -158,7 +178,11 @@ export default function Home() {
 
         {/* Results Grid */}
         <div className="h-[70vh] overflow-y-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-gray-100 rounded-md shadow-md">
-          {searchClicked && filteredProducts.length === 0 ? (
+          {loading ? (
+            <p className="text-center text-gray-500">Cargando productos...</p>
+          ) : error ? (
+            <p className="text-red-500 text-center">{error}</p>
+          ) : searchClicked && filteredProducts.length === 0 ? (
             <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
               No se encontraron resultados para tu búsqueda.
             </p>
