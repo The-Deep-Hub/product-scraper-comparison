@@ -7,11 +7,11 @@ struct HealthResponse {
     version: &'static str,
 }
 
-#[get("/health")]
-pub async fn healthcheck() -> impl Responder {
+#[get("")]
+pub async fn health_check() -> impl Responder {
     let response = HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
     };
     HttpResponse::Ok().json(response)
-} 
+}
