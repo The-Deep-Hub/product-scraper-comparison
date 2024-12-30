@@ -20,28 +20,16 @@ The endpoint does not require any request body or query parameters for this mock
 ### **Success Response**
 Returns an array of product objects in the following structure:
 ```json
-[
-  {
-    "name": "string",                 // Product name
-    "store": "string",                // Store name (e.g., "leroy", "bricodepot")
-    "url": "string",                  // URL to the product page
-    "image_url": "string",            // URL of the product image
-    "current_price": {
-      "amount": "number",             // Current price
-      "currency": "string"            // Currency code (e.g., "EUR")
-    },
-    "original_price": {
-      "amount": "number|null",        // Original price (null if no discount)
-      "currency": "string|null"       // Currency code (null if no discount)
-    },
-    "discount": "number|null",        // Discount percentage (null if no discount)
-    "description": "string",          // Product description (e.g., "No description available")
-    "metadata": {
-      "sku": "string|null",           // Unique product identifier (optional, null if unavailable)
-      "source": "string"              // Data source (e.g., "leroymerlin", "bricodepot")
-    }
-  }
-]
+type Product = {
+  name: string; // Product name
+  store: string; // Store name (e.g., "leroy", "bricodepot")
+  url: string; // URL to the product page
+  image_url: string; // URL of the product image
+  current_price: number; // Current price (in EUR)
+  original_price: number | null; // Original price (null if no discount)
+  description: string; // Product description (e.g., "No description available"). Might return "No description available" as missing description. Title could be a substitute to handle missing data. 
+};
+
 ```
 
 ### **Example Success Response**
@@ -53,22 +41,21 @@ Returns an array of product objects in the following structure:
     "store": "leroymerlin",
     "url": "https://www.leroymerlin.es/product/martillo-clasico",
     "image_url": "https://via.placeholder.com/150",
-    "current_price": {
-      "amount": 10.99,
-      "currency": "EUR"
-    },
-    "original_price": {
-      "amount": null,
-      "currency": null
-    },
-    "discount": null,
-    "description": "Martillo tradicional con mango de madera.",
-    "metadata": {
-      "sku": "93281797",
-      "source": "leroymerlin"
-    }
+    "current_price": 10.99,
+    "original_price": null,
+    "description": "Martillo tradicional con mango de madera."
+  },
+  {
+    "name": "Well home - set de 4 sillas bas rojas",
+    "store": "bricodepot",
+    "url": "https://www.bricodepot.es/well-home-set-de-4-sillas-43x47x79cm-bas-rojas-245caa42",
+    "image_url": "https://media.adeo.com/media/93921509/media.jpg",
+    "current_price": 129.8,
+    "original_price": 150.0,
+    "description": "No description available"
   }
 ]
+
 ```
 
 ---
