@@ -56,7 +56,7 @@
 - [ ] **Write detailed usage documentation** for:
   - [ ] Filters (including new features).
   - [ ] Search functionality.
-  - [ ] Expected API integration behavior.
+  - [x] Expected API integration behavior.
 
 ---
 
