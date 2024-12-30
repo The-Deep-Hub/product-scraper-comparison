@@ -25,7 +25,6 @@ export default function RootLayout({
       >
         {/* Header */}
         <header className="sticky top-0 z-10 bg-gray-200 p-4 shadow-md">
-          <title>Construction Search App</title>
           <h1 className="text-2xl font-bold text-center">
             Construction Search App
           </h1>
