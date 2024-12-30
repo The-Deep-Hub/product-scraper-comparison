@@ -32,7 +32,7 @@
 
 ## Functionality Improvements
 - [ ] **Sort by price (ascending/descending)** in the filter panel.
-- [ ] **Add a category filter** (checkboxes for providers: Bauhaus, Leroy Merlin, etc.).
+- [ ] **Add a category filter** (checkboxes for providers: Bauhaus, Leroy Merlin, and Brico Depot.).
 - [ ] **Handle missing data**:
   - [ ] Show product title as a placeholder description if `description` is missing.
 - [ ] **Improve user feedback for empty searches**:
@@ -52,7 +52,7 @@
 ---
 
 ## Documentation
-- [ ] **Document the proposed API endpoint** for the backend developer.
+- [x] **Document the proposed API endpoint** for the backend developer.
 - [ ] **Write detailed usage documentation** for:
   - [ ] Filters (including new features).
   - [ ] Search functionality.
