@@ -3,44 +3,46 @@ use rust_scraper::{
     services::{
         cache::{CacheService, RedisCacheService},
         queue::{QueueService, RabbitMQQueue},
-        scraper::{CombinedScraperService, ScraperService},
+        scraper::ScraperService,
     },
-    models::store::Store,
-    scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
+    models::{
+        store::Store,
+        task::{StoreTask, StoreResult},
+    },
+    scrapers::BricodepotScraper,
 };
-use tracing::{info, error, warn};
+use tracing::{info, error};
 use std::time::Duration;
 use tokio::time::sleep;
 use futures::StreamExt;
-use futures_util::TryStreamExt;
 use lapin::{
     options::*, types::FieldTable, BasicProperties,
     Connection, ConnectionProperties, Channel, Consumer,
 };
 use std::sync::Arc;
 
-const PREFETCH_COUNT: u16 = 3;
+const QUEUE_NAME: &str = "store_tasks_bricodepot";
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
-const QUEUE_NAME: &str = "scraper_tasks";
+const PREFETCH_COUNT: u16 = 3;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize logging
     tracing_subscriber::fmt()
-        .with_env_filter("rust_scraper=debug,task_worker=debug")
+        .with_env_filter("rust_scraper=debug,bricodepot_worker=debug")
         .init();
 
     // Load environment variables
     dotenv::dotenv().ok();
 
     // Initialize services
-    let (cache_service, queue_service, scrapers) = initialize_services().await?;
+    let (cache_service, queue_service, scraper) = initialize_services().await?;
     
     // Get RabbitMQ connection details
     let amqp_url = std::env::var("AMQP_ADDR").expect("AMQP_ADDR must be set");
     
     loop {
-        match setup_and_run_consumer(&amqp_url, cache_service.clone(), queue_service.clone(), &scrapers).await {
+        match run_consumer(&amqp_url, cache_service.clone(), queue_service.clone(), scraper.clone()).await {
             Ok(_) => {
                 error!("Consumer stopped unexpectedly");
             }
@@ -54,7 +56,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueService>, Vec<Arc<dyn ScraperService>>), Box<dyn std::error::Error>> {
+async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueService>, Arc<dyn ScraperService>), Box<dyn std::error::Error>> {
     // Initialize Redis cache service
     let redis_url = format!(
         "redis://{}:{}@{}:{}/",
@@ -68,22 +70,18 @@ async fn initialize_services() -> Result<(Arc<dyn CacheService>, Arc<dyn QueueSe
     // Initialize queue service
     let queue_service = Arc::new(RabbitMQQueue::new().await?) as Arc<dyn QueueService>;
     
-    // Initialize Zyte client and scrapers
+    // Initialize Zyte client and Bricodepot scraper
     let zyte_client = ZyteClient::new()?;
-    let scrapers: Vec<Arc<dyn ScraperService>> = vec![
-        Arc::new(LeroyScraper::new(zyte_client.clone())),
-        Arc::new(BauhausScraper::new(zyte_client.clone())),
-        Arc::new(BricodepotScraper::new(zyte_client)),
-    ];
+    let scraper = Arc::new(BricodepotScraper::new(zyte_client)) as Arc<dyn ScraperService>;
     
-    Ok((cache_service, queue_service, scrapers))
+    Ok((cache_service, queue_service, scraper))
 }
 
-async fn setup_and_run_consumer(
+async fn run_consumer(
     amqp_url: &str,
     cache_service: Arc<dyn CacheService>,
     queue_service: Arc<dyn QueueService>,
-    scrapers: &[Arc<dyn ScraperService>],
+    scraper: Arc<dyn ScraperService>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     // Connect to RabbitMQ
     let conn = Connection::connect(
@@ -99,7 +97,7 @@ async fn setup_and_run_consumer(
     info!("Starting consumer for queue: {}", QUEUE_NAME);
     let mut consumer = channel.basic_consume(
         QUEUE_NAME,
-        "task_worker",
+        "bricodepot_worker",
         BasicConsumeOptions::default(),
         FieldTable::default(),
     ).await?;
@@ -109,19 +107,19 @@ async fn setup_and_run_consumer(
     while let Some(delivery) = consumer.next().await {
         match delivery {
             Ok(delivery) => {
-                let task_id = String::from_utf8_lossy(&delivery.data);
-                info!("Received task: {}", task_id);
+                let task: StoreTask = serde_json::from_slice(&delivery.data)?;
+                info!("Received task: {} for query: {}", task.id, task.query);
                 
-                match process_task(&task_id, queue_service.clone(), cache_service.clone(), scrapers).await {
+                match process_task(&task, queue_service.clone(), cache_service.clone(), scraper.clone()).await {
                     Ok(_) => {
                         delivery.ack(BasicAckOptions::default()).await?;
-                        info!("Task {} processed successfully", task_id);
+                        info!("Task {} processed successfully", task.id);
                     }
                     Err(e) => {
                         delivery.reject(BasicRejectOptions {
                             requeue: false,
                         }).await?;
-                        error!("Failed to process task {}: {}", task_id, e);
+                        error!("Failed to process task {}: {}", task.id, e);
                     }
                 }
             }
@@ -135,44 +133,27 @@ async fn setup_and_run_consumer(
 }
 
 async fn process_task(
-    task_id: &str,
+    task: &StoreTask,
     queue_service: Arc<dyn QueueService>,
     cache_service: Arc<dyn CacheService>,
-    scrapers: &[Arc<dyn ScraperService>],
+    scraper: Arc<dyn ScraperService>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let task = queue_service.get_task(task_id).await?;
-    info!("Processing task {} for query: {}", task_id, task.query);
+    // Scrape products
+    let products = scraper.search_products(&task.query).await?;
+    info!("Found {} products for query: {}", products.len(), task.query);
     
-    let mut all_products = Vec::new();
-    let mut had_error = false;
+    // Create store result
+    let result = StoreResult {
+        task_id: task.id.clone(),
+        main_task_id: task.main_task_id.clone(),
+        store: Store::Bricodepot,
+        products,
+        created_at: chrono::Utc::now(),
+    };
     
-    for scraper in scrapers {
-        match scraper.search_products(&task.query).await {
-            Ok(products) => {
-                info!("Found {} products", products.len());
-                all_products.extend(products);
-            }
-            Err(e) => {
-                error!("Scraper error: {}", e);
-                had_error = true;
-            }
-        }
-    }
-    
-    // Cache results if we have any
-    if !all_products.is_empty() {
-        if let Err(e) = cache_service.set_search_results(&task.query, &all_products).await {
-            error!("Error caching results: {}", e);
-            had_error = true;
-        }
-    }
-    
-    // Update task status
-    if had_error {
-        queue_service.mark_task_failed(task_id.to_string(), "Some scrapers failed".into()).await?;
-    } else {
-        queue_service.mark_task_completed(task_id.to_string()).await?;
-    }
+    // Update cache with results
+    cache_service.set_store_result(&result).await?;
+    info!("Stored results for task {}", task.id);
     
     Ok(())
 } 

@@ -1,7 +1,7 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector};
+use scraper::{Html, Selector, ElementRef};
 use std::collections::HashMap;
-use tracing::{info, error};
+use tracing::{debug, info, warn};
 
 use crate::{
     error::{AppError, AppResult},
@@ -9,41 +9,153 @@ use crate::{
         product::{Product, ProductPrice},
         store::Store,
     },
-    services::scraper::ScraperService,
     clients::zyte::ZyteClient,
+    services::scraper::ScraperService,
 };
 
+use super::base::BaseScraper;
+
 pub struct BricodepotScraper {
+    store_name: String,
     base_url: String,
     search_url: String,
     client: ZyteClient,
+    selectors: Selectors,
+}
+
+struct Selectors {
+    product_card: Selector,
+    name: Selector,
+    price_wrapper: Selector,
+    price_style: Selector,
+    price_integer: Selector,
+    price_decimal: Selector,
+    original_price: Selector,
+    image: Selector,
 }
 
 impl BricodepotScraper {
     pub fn new(client: ZyteClient) -> Self {
+        let selectors = Selectors {
+            product_card: Selector::parse("a.product-item").unwrap(),
+            name: Selector::parse("div.product-name").unwrap(),
+            price_wrapper: Selector::parse("p.price-wrapper").unwrap(),
+            price_style: Selector::parse("span.price-style").unwrap(),
+            price_integer: Selector::parse("span:first-child").unwrap(),
+            price_decimal: Selector::parse("span.price-top").unwrap(),
+            original_price: Selector::parse("p.price-was").unwrap(),
+            image: Selector::parse("img[src]").unwrap(),
+        };
+
         Self {
+            store_name: "bricodepot".to_string(),
             base_url: "https://www.bricodepot.es".to_string(),
             search_url: "https://www.bricodepot.es/catalogsearch/result/?q=".to_string(),
             client,
+            selectors,
         }
     }
 
-    fn extract_products_from_html(&self, html: &str) -> Vec<Product> {
-        let document = Html::parse_document(html);
-        let product_selector = Selector::parse("a.product-item")
-            .expect("Failed to parse product selector");
-
-        document
-            .select(&product_selector)
-            .filter_map(|card| self.parse_product(card))
-            .collect()
+    fn extract_price(&self, card: &ElementRef) -> Option<f64> {
+        // Locate the price container
+        let price_wrapper = card.select(&self.selectors.price_wrapper).next()?;
+        
+        // Extract the price style container
+        let price_style = price_wrapper.select(&self.selectors.price_style).next()?;
+        
+        // Extract integer part
+        let integer_part = price_style
+            .select(&self.selectors.price_integer)
+            .next()
+            .map(|el| el.text().collect::<String>())
+            .unwrap_or_else(|| "0".to_string())
+            .trim()
+            .to_string();
+        
+        // Extract decimal part
+        let decimal_part = price_style
+            .select(&self.selectors.price_decimal)
+            .next()
+            .map(|el| el.text().collect::<String>())
+            .unwrap_or_else(|| "00".to_string())
+            .trim()
+            .to_string();
+        
+        // Combine parts into float
+        let combined_price = format!("{}.{}", integer_part, decimal_part);
+        combined_price.parse::<f64>().ok()
     }
 
-    fn parse_product<'a>(&self, card: scraper::ElementRef<'a>) -> Option<Product> {
+    fn extract_original_price(&self, card: &ElementRef) -> Option<f64> {
+        let original_price_tag = card.select(&self.selectors.original_price).next()?;
+        let original_price_text = original_price_tag
+            .text()
+            .collect::<String>()
+            .replace(',', ".")
+            .replace('\u{a0}', "")
+            .replace('€', "")
+            .trim()
+            .to_string();
+        
+        original_price_text.parse::<f64>().ok()
+    }
+
+    fn extract_image_url(&self, card: &ElementRef) -> Option<String> {
+        // Find all image tags
+        let mut image_tags: Vec<_> = card.select(&self.selectors.image).collect();
+        if image_tags.is_empty() {
+            warn!("No image tags found");
+            return None;
+        }
+
+        // Prioritize PNG images
+        for img_tag in &image_tags {
+            if let Some(src) = img_tag.value().attr("src") {
+                if src.ends_with(".png") {
+                    return Some(src.to_string());
+                }
+            }
+        }
+
+        // Fallback to first available image
+        image_tags.first()?.value().attr("src").map(|s| s.to_string())
+    }
+}
+
+#[async_trait]
+impl BaseScraper for BricodepotScraper {
+    fn get_store_name(&self) -> &str {
+        &self.store_name
+    }
+
+    fn get_base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    fn get_search_url(&self) -> &str {
+        &self.search_url
+    }
+
+    async fn get_product_data(&self, query: &str, num_products: usize) -> AppResult<Vec<Product>> {
+        let search_url = format!("{}{}", self.get_search_url(), query);
+        let html = self.fetch_search_results(&self.client, &search_url).await?;
+        
+        let document = Html::parse_document(&html);
+        let mut products = Vec::new();
+        
+        for card in document.select(&self.selectors.product_card).take(num_products) {
+            if let Some(product) = self.extract_product_info(&card) {
+                products.push(product);
+            }
+        }
+        
+        Ok(products)
+    }
+
+    fn extract_product_info(&self, card: &ElementRef) -> Option<Product> {
         // Extract name
-        let name_selector = Selector::parse("div.product-name").ok()?;
         let name = card
-            .select(&name_selector)
+            .select(&self.selectors.name)
             .next()?
             .text()
             .collect::<String>()
@@ -53,129 +165,56 @@ impl BricodepotScraper {
         // Extract URL
         let url = card.value().attr("href")?.to_string();
 
-        // Extract price
-        let price = self.extract_price(card);
+        // Extract current price
+        let current_price = self.extract_price(card).map(|amount| ProductPrice {
+            amount,
+            currency: "EUR".to_string(),
+        })?;
+
+        // Extract original price if available
+        let original_price = self.extract_original_price(card).map(|amount| ProductPrice {
+            amount,
+            currency: "EUR".to_string(),
+        });
 
         // Extract image URL
-        let image_url = self.extract_image_url(card);
+        let image_url = self.extract_image_url(card)
+            .unwrap_or_default();
 
-        // Extract original price for metadata
+        // Build metadata
         let mut metadata = HashMap::new();
         metadata.insert("source".to_string(), "bricodepot".to_string());
-        
-        if let Some(original_price) = self.extract_original_price(card) {
-            metadata.insert("original_price".to_string(), original_price.to_string());
-        }
 
         Some(Product {
             name,
-            description: None,
+            description: "No description available".to_string(), // Bricodepot doesn't provide descriptions in search results
+            current_price,
+            original_price,
             url,
             image_url,
-            price,
             store: Store::Bricodepot,
             metadata: Some(metadata),
         })
-    }
-
-    fn extract_price<'a>(&self, card: scraper::ElementRef<'a>) -> Option<ProductPrice> {
-        let price_wrapper_selector = Selector::parse("p.price-wrapper").ok()?;
-        let price_style_selector = Selector::parse("span.price-style").ok()?;
-        
-        let price_wrapper = card.select(&price_wrapper_selector).next()?;
-        let price_style = price_wrapper.select(&price_style_selector).next()?;
-
-        // Get integer part from first span
-        let spans: Vec<_> = price_style.select(&Selector::parse("span").ok()?).collect();
-        let integer_part = spans.first()?.text().collect::<String>().trim().to_string();
-
-        // Get decimal part from span.price-top
-        let decimal_selector = Selector::parse("span.price-top").ok()?;
-        let decimal_part = price_style
-            .select(&decimal_selector)
-            .next()?
-            .text()
-            .collect::<String>()
-            .trim()
-            .to_string();
-
-        // Combine parts and convert to float
-        let price_str = format!("{}.{}", integer_part, decimal_part);
-        price_str.parse::<f64>().ok().map(|amount| ProductPrice {
-            amount,
-            currency: "EUR".to_string(),
-        })
-    }
-
-    fn extract_original_price<'a>(&self, card: scraper::ElementRef<'a>) -> Option<f64> {
-        let price_was_selector = Selector::parse("p.price-was").ok()?;
-        let price_text = card
-            .select(&price_was_selector)
-            .next()?
-            .text()
-            .collect::<String>()
-            .trim()
-            .replace(',', ".")
-            .replace('\u{a0}', "")
-            .replace('€', "");
-
-        price_text.parse::<f64>().ok()
-    }
-
-    fn extract_image_url<'a>(&self, card: scraper::ElementRef<'a>) -> Option<String> {
-        let img_selector = Selector::parse("img[src]").ok()?;
-        let images: Vec<_> = card
-            .select(&img_selector)
-            .filter_map(|img| img.value().attr("src"))
-            .map(|s| s.to_string())  // Convert to owned String
-            .collect();
-
-        // Prioritize PNG images
-        let png_image = images.iter().find(|src| src.ends_with(".png"));
-        if let Some(src) = png_image {
-            return Some(src.to_string());
-        }
-
-        // Fallback to first available image
-        images.first().map(|src| src.to_string())
-    }
-
-    async fn scrape_url(&self, url: &str) -> AppResult<String> {
-        let html = self.client.get_rendered_html(url).await?;
-        Ok(html)
     }
 }
 
 #[async_trait]
 impl ScraperService for BricodepotScraper {
     async fn get_product_details(&self, url: &str) -> AppResult<Product> {
-        info!("Getting product details from URL: {}", url);
-        
-        let html = self.scrape_url(url).await?;
+        let html = self.fetch_search_results(&self.client, url).await?;
         let document = Html::parse_document(&html);
         
-        // Find the product card on the details page
-        let product_selector = Selector::parse("div.product-info-main")
-            .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        let product_card = document
+            .select(&self.selectors.product_card)
+            .next()
+            .ok_or_else(|| AppError::BadRequest("Product not found".into()))?;
             
-        if let Some(product_card) = document.select(&product_selector).next() {
-            if let Some(product) = self.parse_product(product_card) {
-                return Ok(product);
-            }
-        }
-        
-        Err(AppError::BadRequest("Product data not found".into()))
+        self.extract_product_info(&product_card)
+            .ok_or_else(|| AppError::BadRequest("Failed to extract product info".into()))
     }
 
     async fn search_products(&self, query: &str) -> AppResult<Vec<Product>> {
-        let url = format!("{}{}", self.search_url, urlencoding::encode(query));
-        info!("Searching Bricodepot with URL: {}", url);
-
-        let html = self.scrape_url(&url).await?;
-        let products = self.extract_products_from_html(&html);
-        
-        info!("Successfully parsed {} products from Bricodepot", products.len());
-        Ok(products)
+        self.scrape(query, Some(10)).await
     }
 
     async fn search_store_products(&self, store: Store, query: &str) -> AppResult<Vec<Product>> {
