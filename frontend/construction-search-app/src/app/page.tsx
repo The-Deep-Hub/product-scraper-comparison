@@ -2,19 +2,27 @@
 
 import { useState, useEffect } from "react";
 import { Range } from "react-range";
-import mockData from "./mockData.json";
+import mockData from "./mockProducts.json";
 
-// Define the product type for mock data
 type Product = {
-  productName: string;
-  providerName: string;
-  providerURL: string;
-  imageURL: string;
-  price: number;
-  discount?: number;
-  originalPrice?: number;
-  description: string;
-  purchaseLink: string;
+  name: string; // Product name
+  store: string; // Store name (e.g., "leroy", "bricodepot")
+  url: string; // URL to the product page
+  image_url: string; // URL of the product image
+  current_price: {
+    amount: number; // Current price
+    currency: string; // Currency code (e.g., "EUR")
+  };
+  original_price: {
+    amount: number | null; // Original price (null if no discount)
+    currency: string | null; // Currency code (null if no discount)
+  };
+  discount: number | null; // Discount percentage (null if no discount)
+  description: string; // Product description
+  metadata: {
+    sku: string | null; // Unique product identifier (optional, null if unavailable)
+    source: string; // Data source (e.g., "leroymerlin", "bricodepot")
+  };
 };
 
 export default function Home() {
@@ -32,7 +40,7 @@ export default function Home() {
   // On component mount, calculate the maximum price from the mock data
   useEffect(() => {
     const highestPrice = Math.ceil(
-      Math.max(...mockData.map((product) => product.price))
+      Math.max(...mockData.map((product) => product.current_price.amount))
     );
     setMaxPrice(highestPrice);
     setPriceRange([0, highestPrice]);
@@ -42,12 +50,13 @@ export default function Home() {
   const filterProducts = (query: string, range: [number, number]) => {
     const filtered = mockData.filter(
       (product) =>
-        product.productName.toLowerCase().includes(query.toLowerCase()) &&
-        product.price >= range[0] &&
-        product.price <= range[1]
+        product.name.toLowerCase().includes(query.toLowerCase()) &&
+        product.current_price.amount >= range[0] &&
+        product.current_price.amount <= range[1]
     );
     setFilteredProducts(filtered);
   };
+  
 
   // Handle search button click
   const handleSearch = () => {
@@ -165,38 +174,38 @@ export default function Home() {
               >
                 <div>
                   <img
-                    src={product.imageURL}
-                    alt={product.productName}
+                    src={product.image_url}
+                    alt={product.name}
                     className="w-full h-32 object-cover rounded-md mb-4"
                   />
-                  <h3 className="font-bold">{product.productName}</h3>
+                  <h3 className="font-bold">{product.name}</h3>
                   <a
-                    href={product.providerURL}
+                    href={product.url}
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-blue-500 hover:underline"
                   >
-                    {product.providerName}
+                    {product.store}
                   </a>
                   {product.discount ? (
                     <div>
                       <span className="line-through text-gray-500">
-                        {formatPrice(product.originalPrice!)}
+                        {formatPrice(product.original_price.amount!)}
                       </span>{" "}
                       <span className="font-bold text-green-600">
-                        {formatPrice(product.price)}
+                        {formatPrice(product.current_price.amount)}
                       </span>
                     </div>
                   ) : (
                     <p className="font-bold text-lg">
-                      {formatPrice(product.price)}
+                      {formatPrice(product.current_price.amount)}
                     </p>
                   )}
                   <p className="text-sm text-gray-600">{product.description}</p>
                 </div>
                 <button
                   className="mt-4 bg-blue-500 text-white py-2 px-4 rounded-md"
-                  onClick={() => window.open(product.purchaseLink, "_blank")}
+                  onClick={() => window.open(product.url, "_blank")}
                 >
                   Purchase on Site
                 </button>

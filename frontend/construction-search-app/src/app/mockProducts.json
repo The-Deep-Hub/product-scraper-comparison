@@ -1,0 +1,163 @@
+[
+    {
+      "name": "Martillo Clásico",
+      "store": "leroymerlin",
+      "url": "https://www.leroymerlin.es/product/martillo-clasico",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 10.99,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": null,
+        "currency": null
+      },
+      "discount": null,
+      "description": "Martillo tradicional con mango de madera.",
+      "metadata": {
+        "sku": "93281797",
+        "source": "leroymerlin"
+      }
+    },
+    {
+      "name": "Martillo Antivibración",
+      "store": "bauhaus",
+      "url": "https://www.bauhaus.es/product/martillo-antivibracion",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 12.50,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": 13.99,
+        "currency": "EUR"
+      },
+      "discount": 5,
+      "description": "Martillo con tecnología antivibración.",
+      "metadata": {
+        "sku": "12345678",
+        "source": "bauhaus"
+      }
+    },
+    {
+      "name": "Martillo de Acero",
+      "store": "bricodepot",
+      "url": "https://www.bricodepot.es/product/martillo-acero",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 15.99,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": 18.00,
+        "currency": "EUR"
+      },
+      "discount": 10,
+      "description": "Martillo de acero inoxidable con mango ergonómico.",
+      "metadata": {
+        "sku": "87654321",
+        "source": "bricodepot"
+      }
+    },
+    {
+      "name": "Taladro Inalámbrico",
+      "store": "leroymerlin",
+      "url": "https://www.leroymerlin.es/product/taladro-inalambrico",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 60.99,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": 69.99,
+        "currency": "EUR"
+      },
+      "discount": 10,
+      "description": "Taladro inalámbrico con batería de litio.",
+      "metadata": {
+        "sku": "11223344",
+        "source": "leroymerlin"
+      }
+    },
+    {
+      "name": "Pintura Blanca Mate",
+      "store": "leroymerlin",
+      "url": "https://www.leroymerlin.es/product/pintura-blanca",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 22.99,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": 24.99,
+        "currency": "EUR"
+      },
+      "discount": 5,
+      "description": "Pintura blanca mate para interiores.",
+      "metadata": {
+        "sku": "55667788",
+        "source": "leroymerlin"
+      }
+    },
+    {
+      "name": "Set de 4 Sillas Rojas",
+      "store": "bricodepot",
+      "url": "https://www.bricodepot.es/well-home-set-de-4-sillas-43x47x79cm-bas-rojas-245caa42",
+      "image_url": "https://media.adeo.com/media/93921509/media.jpg",
+      "current_price": {
+        "amount": 129.8,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": null,
+        "currency": null
+      },
+      "discount": null,
+      "description": "Set de 4 sillas rojas con diseño moderno.",
+      "metadata": {
+        "sku": null,
+        "source": "bricodepot"
+      }
+    },
+    {
+      "name": "Banco Acolchado Comfivo",
+      "store": "leroymerlin",
+      "url": "https://www.leroymerlin.es/product/banco-acolchado-comfivo",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 204,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": null,
+        "currency": null
+      },
+      "discount": null,
+      "description": "Banco acolchado, diseño moderno y cómodo.",
+      "metadata": {
+        "sku": "93921508",
+        "source": "leroymerlin"
+      }
+    },
+    {
+      "name": "Pintura Satinada",
+      "store": "bricodepot",
+      "url": "https://www.bricodepot.es/product/pintura-satinada",
+      "image_url": "https://via.placeholder.com/150",
+      "current_price": {
+        "amount": 26.99,
+        "currency": "EUR"
+      },
+      "original_price": {
+        "amount": null,
+        "currency": null
+      },
+      "discount": null,
+      "description": "Pintura satinada para acabados elegantes.",
+      "metadata": {
+        "sku": "44556677",
+        "source": "bricodepot"
+      }
+    }
+  ]
+  
