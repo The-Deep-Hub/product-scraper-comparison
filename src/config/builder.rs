@@ -4,82 +4,13 @@ use dotenv::dotenv;
 use serde::Deserialize;
 use tracing::{info, warn, debug};
 
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct DatabaseConfig {
-    #[serde(default)]
-    pub mongodb_uri: String,
-    #[serde(default = "default_redis_host")]
-    pub redis_host: String,
-    #[serde(default = "default_redis_port")]
-    pub redis_port: u16,
-    #[serde(default = "default_redis_user")]
-    pub redis_user: String,
-    #[serde(default)]
-    pub redis_password: String,
-}
-
-fn default_redis_host() -> String {
-    "localhost".to_string()
-}
-
-fn default_redis_port() -> u16 {
-    6379
-}
-
-fn default_redis_user() -> String {
-    "default".to_string()
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct QueueConfig {
-    #[serde(default)]
-    pub amqp_addr: String,
-    #[serde(default = "default_prefetch_count")]
-    pub prefetch_count: u16,
-}
-
-fn default_prefetch_count() -> u16 {
-    1
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ServerConfig {
-    pub host: String,
-    pub port: u16,
-}
-
-impl Default for ServerConfig {
-    fn default() -> Self {
-        Self {
-            host: "0.0.0.0".to_string(),
-            port: 8080,
-        }
-    }
-}
-
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct ZyteConfig {
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default = "default_zyte_endpoint")]
-    pub endpoint: String,
-    #[serde(default = "default_zyte_concurrent_requests")]
-    pub concurrent_requests: u32,
-    #[serde(default = "default_zyte_request_timeout")]
-    pub request_timeout: u32,
-}
-
-fn default_zyte_endpoint() -> String {
-    "https://api.zyte.com/v1/extract".to_string()
-}
-
-fn default_zyte_concurrent_requests() -> u32 {
-    5
-}
-
-fn default_zyte_request_timeout() -> u32 {
-    30
-}
+use crate::config::services::{
+    DatabaseConfig,
+    QueueConfig,
+    ServerConfig,
+    ZyteConfig,
+    WorkerConfig,
+};
 
 #[derive(Debug, Deserialize, Clone)]
 pub struct AppConfig {
@@ -93,6 +24,8 @@ pub struct AppConfig {
     pub queue: QueueConfig,
     #[serde(default)]
     pub zyte: ZyteConfig,
+    #[serde(default)]
+    pub worker: WorkerConfig,
 }
 
 fn default_environment() -> String {
@@ -107,6 +40,7 @@ impl Default for AppConfig {
             database: DatabaseConfig::default(),
             queue: QueueConfig::default(),
             zyte: ZyteConfig::default(),
+            worker: WorkerConfig::default(),
         }
     }
 }
@@ -191,6 +125,23 @@ impl AppConfig {
         if let Ok(request_timeout) = std::env::var("ZYTE_REQUEST_TIMEOUT") {
             if let Ok(timeout) = request_timeout.parse::<u32>() {
                 config.set("zyte.request_timeout", timeout)?;
+            }
+        }
+
+        // Set worker configuration
+        if let Ok(prefetch_count) = std::env::var("WORKER_PREFETCH_COUNT") {
+            if let Ok(count) = prefetch_count.parse::<u16>() {
+                config.set("worker.prefetch_count", count as i64)?;
+            }
+        }
+        if let Ok(reconnect_delay) = std::env::var("WORKER_RECONNECT_DELAY") {
+            if let Ok(delay) = reconnect_delay.parse::<u64>() {
+                config.set("worker.reconnect_delay_secs", delay as i64)?;
+            }
+        }
+        if let Ok(product_limit) = std::env::var("WORKER_PRODUCT_LIMIT") {
+            if let Ok(limit) = product_limit.parse::<usize>() {
+                config.set("worker.product_limit", limit as i64)?;
             }
         }
 

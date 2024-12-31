@@ -1,6 +1,4 @@
 use serde::Deserialize;
-use tracing::warn;
-use crate::config::error::ConfigError;
 
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct Config {
@@ -14,15 +12,14 @@ pub struct Config {
     pub request_timeout: u32,
 }
 
-fn default_endpoint() -> String { "https://api.zyte.com/v1/extract".to_string() }
-fn default_concurrent_requests() -> u32 { 5 }
-fn default_request_timeout() -> u32 { 30 }
+fn default_endpoint() -> String {
+    "https://api.zyte.com/v1/extract".to_string()
+}
 
-impl Config {
-    pub fn validate(&self) -> Result<(), ConfigError> {
-        if self.api_key.is_empty() {
-            warn!("Zyte API key is not set");
-        }
-        Ok(())
-    }
+fn default_concurrent_requests() -> u32 {
+    5
+}
+
+fn default_request_timeout() -> u32 {
+    30
 }
