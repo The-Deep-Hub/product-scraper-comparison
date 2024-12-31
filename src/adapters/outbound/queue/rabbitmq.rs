@@ -24,9 +24,10 @@ pub struct Task {
     pub updated_at: chrono::DateTime<Utc>,
 }
 
+#[derive(Clone)]
 pub struct RabbitMQAdapter {
-    connection: Connection,
-    channel: Channel,
+    connection: Arc<Connection>,
+    channel: Arc<Channel>,
     queue_name: String,
     redis: ConnectionManager,
 }
@@ -39,14 +40,14 @@ impl RabbitMQAdapter {
     pub async fn new(amqp_addr: String, redis_url: String) -> Result<Self, DomainError> {
         // Initialize RabbitMQ connection
         info!("Connecting to RabbitMQ at: {}", amqp_addr);
-        let connection = Connection::connect(
+        let connection = Arc::new(Connection::connect(
             &amqp_addr,
             ConnectionProperties::default()
                 .with_connection_name("scraper-service".into()),
-        ).await.map_err(|e| DomainError::queue(format!("Failed to connect to RabbitMQ: {}", e)))?;
+        ).await.map_err(|e| DomainError::queue(format!("Failed to connect to RabbitMQ: {}", e)))?);
         
-        let channel = connection.create_channel().await
-            .map_err(|e| DomainError::queue(format!("Failed to create channel: {}", e)))?;
+        let channel = Arc::new(connection.create_channel().await
+            .map_err(|e| DomainError::queue(format!("Failed to create channel: {}", e)))?);
         let queue_name = "scraper_tasks".to_string();
         
         // Try to delete existing queues first

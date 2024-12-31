@@ -9,6 +9,7 @@ use tracing::{info, error};
 use crate::domain::models::DomainError;
 use crate::domain::ports::outbound::HttpClientPort;
 
+#[derive(Clone)]
 pub struct ZyteAdapter {
     client: Arc<Client>,
     api_key: String,

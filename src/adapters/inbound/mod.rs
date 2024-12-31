@@ -1,1 +1,1 @@
-// Inbound adapters will be implemented later 
+pub mod api; 

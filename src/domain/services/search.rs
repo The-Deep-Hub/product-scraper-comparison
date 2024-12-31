@@ -1,103 +1,99 @@
-use std::sync::Arc;
-use tracing::{info, warn};
+use async_trait::async_trait;
+use crate::domain::{
+    models::{Product, Store, DomainResult},
+    ports::{
+        outbound::{CachePort, QueuePort, HttpClientPort},
+        inbound::ProductSearchPort,
+    },
+};
 
-use crate::domain::models::{Product, Store, DomainResult, DomainError};
-use crate::domain::ports::outbound::{CachePort, QueuePort, ScraperPort};
-use crate::domain::events::DomainEvent;
-
-pub struct SearchService {
-    cache: Arc<dyn CachePort>,
-    queue: Arc<dyn QueuePort>,
-    scrapers: Vec<Arc<dyn ScraperPort>>,
+#[derive(Clone)]
+pub struct SearchService<C, Q, H>
+where
+    C: CachePort + Clone,
+    Q: QueuePort + Clone,
+    H: HttpClientPort + Clone,
+{
+    cache: C,
+    queue: Q,
+    http: H,
 }
 
-impl SearchService {
-    pub fn new(
-        cache: Arc<dyn CachePort>,
-        queue: Arc<dyn QueuePort>,
-        scrapers: Vec<Arc<dyn ScraperPort>>,
-    ) -> Self {
-        Self {
-            cache,
-            queue,
-            scrapers,
-        }
+impl<C, Q, H> SearchService<C, Q, H>
+where
+    C: CachePort + Clone,
+    Q: QueuePort + Clone,
+    H: HttpClientPort + Clone,
+{
+    pub fn new(cache: C, queue: Q, http: H) -> Self {
+        Self { cache, queue, http }
     }
+}
 
-    pub async fn search_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
-        // Try to get products from cache first
-        if let Ok(cached_products) = self.cache.get_products(query).await {
-            info!("Found {} products in cache for query: {}", cached_products.len(), query);
-            return Ok(cached_products);
+#[async_trait]
+impl<C, Q, H> ProductSearchPort for SearchService<C, Q, H>
+where
+    C: CachePort + Clone,
+    Q: QueuePort + Clone,
+    H: HttpClientPort + Clone,
+{
+    async fn search_products(&self, query: &str) -> DomainResult<Vec<Product>> {
+        // Try to get from cache first
+        if let Ok(products) = self.cache.get_products(query).await {
+            if !products.is_empty() {
+                return Ok(products);
+            }
         }
 
-        // Enqueue scraping job for background processing
+        // Enqueue search job
         self.queue.enqueue_scrape_job(query).await?;
-        info!("Enqueued scraping job for query: {}", query);
 
-        // Do immediate scraping for the request
-        let mut all_products = Vec::new();
-        for scraper in &self.scrapers {
-            match scraper.scrape_products(query, limit).await {
-                Ok(products) => {
-                    info!("Found {} products from scraper", products.len());
-                    all_products.extend(products);
-                }
-                Err(e) => warn!("Error scraping products: {}", e),
-            }
-        }
+        // Process the job
+        self.queue.process_scrape_job(query).await?;
 
-        // Cache the results
-        if !all_products.is_empty() {
-            if let Err(e) = self.cache.cache_products(query, &all_products).await {
-                warn!("Failed to cache products: {}", e);
-            }
-        }
-
-        Ok(all_products)
+        // Get results from cache
+        self.cache.get_products(query).await
     }
 
-    pub async fn search_store_products(&self, store: Store, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
-        // Try to get products from cache first
-        if let Ok(cached_products) = self.cache.get_products(query).await {
-            let store_products: Vec<_> = cached_products
+    async fn search_store_products(&self, store: Store, query: &str) -> DomainResult<Vec<Product>> {
+        // Try to get from cache first
+        if let Ok(products) = self.cache.get_products(query).await {
+            let store_products: Vec<Product> = products
                 .into_iter()
                 .filter(|p| p.store() == store)
                 .collect();
             
             if !store_products.is_empty() {
-                info!("Found {} products in cache for store {} and query: {}", 
-                    store_products.len(), store, query);
                 return Ok(store_products);
             }
         }
 
-        // Find the appropriate scraper for the store
-        for scraper in &self.scrapers {
-            if scraper.get_store() == store {
-                let products = scraper.scrape_products(query, limit).await?;
-                
-                // Cache the results
-                if !products.is_empty() {
-                    if let Err(e) = self.cache.cache_products(query, &products).await {
-                        warn!("Failed to cache products: {}", e);
-                    }
-                }
+        // Enqueue search job
+        self.queue.enqueue_scrape_job(query).await?;
 
-                return Ok(products);
-            }
-        }
+        // Process the job
+        self.queue.process_scrape_job(query).await?;
 
-        Ok(Vec::new())
+        // Get results from cache and filter by store
+        let products = self.cache.get_products(query).await?;
+        Ok(products
+            .into_iter()
+            .filter(|p| p.store() == store)
+            .collect())
     }
 
-    pub async fn get_product_details(&self, url: &str) -> DomainResult<Product> {
-        for scraper in &self.scrapers {
-            if scraper.can_handle_url(url) {
-                return scraper.get_product_details(url).await;
+    async fn get_product_details(&self, url: &str) -> DomainResult<Product> {
+        // Try to get from cache first
+        if let Ok(products) = self.cache.get_products(url).await {
+            if let Some(product) = products.into_iter().next() {
+                return Ok(product);
             }
         }
+
+        // Fetch and parse product details
+        let html = self.http.get_rendered_html(url).await?;
         
-        Err(DomainError::not_found("No scraper found for URL"))
+        // TODO: Implement product parsing
+        todo!("Implement product parsing")
     }
 } 

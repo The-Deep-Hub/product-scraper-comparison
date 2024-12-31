@@ -7,6 +7,7 @@ use crate::domain::ports::outbound::CachePort;
 
 const CACHE_EXPIRY: u64 = 3600; // 1 hour
 
+#[derive(Clone)]
 pub struct RedisAdapter {
     connection: ConnectionManager,
 }
