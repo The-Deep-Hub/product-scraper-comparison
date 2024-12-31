@@ -12,5 +12,6 @@ pub mod services;
 pub mod utils;
 pub mod workers;
 pub mod domain;
+pub mod adapters;
 
 pub use error::{AppError, AppResult};
