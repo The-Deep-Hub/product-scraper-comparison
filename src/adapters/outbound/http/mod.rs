@@ -1,1 +1,3 @@
-// Zyte adapter will be implemented later 
+mod zyte;
+
+pub use zyte::ZyteAdapter; 
