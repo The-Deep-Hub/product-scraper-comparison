@@ -1,0 +1,1 @@
+// Redis adapter will be implemented later 

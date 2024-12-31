@@ -1,0 +1,1 @@
+// RabbitMQ adapter will be implemented later 

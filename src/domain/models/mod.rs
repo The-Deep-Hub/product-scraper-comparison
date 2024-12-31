@@ -1,7 +1,7 @@
-mod error;
-mod product;
-mod store;
+pub mod error;
+pub mod product;
+pub mod store;
 
-pub use error::DomainError;
-pub use product::{Product, ProductId, Price, ProductUrls};
+pub use error::{DomainError, DomainResult};
+pub use product::Product;
 pub use store::Store; 

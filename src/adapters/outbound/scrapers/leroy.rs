@@ -1,27 +1,30 @@
 use async_trait::async_trait;
-use scraper::{Html, Selector};
+use scraper::{Html, ElementRef, Selector};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use url::Url;
 
-use crate::domain::{
-    models::{Product, Store, DomainError},
-    ports::ScraperPort,
-};
-use crate::domain::ports::HttpClientPort;
-use std::sync::Arc;
+use crate::domain::models::{Product, Store, DomainResult, DomainError};
+use crate::domain::ports::outbound::{ScraperPort, HttpClientPort};
 
 const BASE_URL: &str = "https://www.leroymerlin.es";
 const SEARCH_URL: &str = "https://www.leroymerlin.es/search?q=";
 const BASE_IMAGE_URL: &str = "https://media.adeo.com/media/";
 
-pub struct LeroyScraperAdapter {
-    http_client: Arc<dyn HttpClientPort>,
+/// Leroy Merlin scraper implementation
+pub struct LeroyScraper {
+    base_url: String,
+    search_url: String,
+    client: Box<dyn HttpClientPort>,
 }
 
-impl LeroyScraperAdapter {
-    pub fn new(http_client: Arc<dyn HttpClientPort>) -> Self {
-        Self { http_client }
+impl LeroyScraper {
+    pub fn new(client: Box<dyn HttpClientPort>) -> DomainResult<Self> {
+        Ok(Self {
+            base_url: BASE_URL.to_string(),
+            search_url: SEARCH_URL.to_string(),
+            client,
+        })
     }
 
     fn extract_products_from_html(&self, html: &str) -> Vec<Value> {
@@ -56,6 +59,7 @@ impl LeroyScraperAdapter {
             }
         };
         
+        // Extract price
         let price = product_data
             .get("offer")
             .and_then(|o| o.get("price"))
@@ -65,10 +69,12 @@ impl LeroyScraperAdapter {
                 0.0
             });
 
+        // Extract original price
         let original_price = product_data
             .get("displayed_price")
             .and_then(|p| p.as_f64());
 
+        // Build URLs
         let sku = match product_data.get("sku").and_then(|s| s.as_str()) {
             Some(s) => s,
             None => {
@@ -78,7 +84,7 @@ impl LeroyScraperAdapter {
         };
 
         let url = match product_data.get("url").and_then(|u| u.as_str()) {
-            Some(u) => format!("{}{}", BASE_URL, u),
+            Some(u) => format!("{}{}", self.base_url, u),
             None => {
                 warn!("Failed to extract URL for product: {}", name);
                 return None;
@@ -100,23 +106,32 @@ impl LeroyScraperAdapter {
 }
 
 #[async_trait]
-impl ScraperPort for LeroyScraperAdapter {
+impl ScraperPort for LeroyScraper {
     fn get_store(&self) -> Store {
         Store::LeroyMerlin
     }
 
-    async fn scrape_products(&self, query: &str, limit: Option<usize>) -> Result<Vec<Product>, DomainError> {
-        let search_url = format!("{}{}", SEARCH_URL, query);
+    fn can_handle_url(&self, url: &str) -> bool {
+        if let Ok(parsed_url) = Url::parse(url) {
+            parsed_url.host_str()
+                .map(|host| host.contains("leroymerlin.es"))
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    async fn scrape_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
+        let search_url = format!("{}{}", self.search_url, query);
         info!("Fetching products from URL: {}", search_url);
         
-        let html = self.http_client.get_rendered_html(&search_url).await?;
+        let html = self.client.get(&search_url).await?;
         
         let raw_products = self.extract_products_from_html(&html);
         info!("Found {} raw products", raw_products.len());
 
         let mut products = Vec::new();
-        let limit = limit.unwrap_or(24); // Default to 24 products per page
-        for product_data in raw_products.iter().take(limit) {
+        for product_data in raw_products.iter().take(limit.unwrap_or(24)) {
             if let Some(product) = self.parse_product(product_data) {
                 debug!("Successfully extracted product: {}", product.name());
                 products.push(product);
@@ -129,10 +144,11 @@ impl ScraperPort for LeroyScraperAdapter {
         Ok(products)
     }
 
-    async fn get_product_details(&self, url: &str) -> Result<Product, DomainError> {
-        let html = self.http_client.get_rendered_html(url).await?;
+    async fn get_product_details(&self, url: &str) -> DomainResult<Product> {
+        let html = self.client.get(url).await?;
         let document = Html::parse_document(&html);
         
+        // Try to find the product data in JSON format
         let script_selector = Selector::parse("script.dataTms[type='application/json']")
             .expect("Invalid script selector");
             
@@ -155,15 +171,5 @@ impl ScraperPort for LeroyScraperAdapter {
         }
         
         Err(DomainError::not_found("Failed to extract product details"))
-    }
-
-    fn can_handle_url(&self, url: &str) -> bool {
-        if let Ok(parsed_url) = Url::parse(url) {
-            parsed_url.host_str()
-                .map(|host| host.contains("leroymerlin.es"))
-                .unwrap_or(false)
-        } else {
-            false
-        }
     }
 } 

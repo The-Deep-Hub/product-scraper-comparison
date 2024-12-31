@@ -1,18 +1,12 @@
 use async_trait::async_trait;
-use std::time::Duration;
-use crate::domain::models::{Product, DomainError};
+
+use crate::domain::models::{Product, DomainResult};
 
 #[async_trait]
 pub trait CachePort: Send + Sync {
-    /// Get cached products for a query
-    async fn get_products(&self, query: &str) -> Result<Option<Vec<Product>>, DomainError>;
+    async fn get_products(&self, query: &str) -> DomainResult<Vec<Product>>;
     
-    /// Cache products for a query with TTL
-    async fn cache_products(&self, query: &str, products: Vec<Product>, ttl: Duration) -> Result<(), DomainError>;
+    async fn cache_products(&self, query: &str, products: &[Product]) -> DomainResult<()>;
     
-    /// Invalidate cache for a query
-    async fn invalidate(&self, query: &str) -> Result<(), DomainError>;
-    
-    /// Check if a query is cached
-    async fn is_cached(&self, query: &str) -> Result<bool, DomainError>;
+    async fn invalidate(&self, query: &str) -> DomainResult<()>;
 } 

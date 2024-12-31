@@ -1,0 +1,1 @@
+// Zyte adapter will be implemented later 

@@ -1,8 +1,5 @@
-mod product_search;
-mod scraper_worker;
+mod search;
+mod scraper;
 
-#[cfg(test)]
-mod tests;
-
-pub use product_search::ProductSearchService;
-pub use scraper_worker::ScraperWorkerService; 
+pub use search::SearchService;
+pub use scraper::ScraperService; 

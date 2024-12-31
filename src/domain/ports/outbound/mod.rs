@@ -1,9 +1,9 @@
 mod cache;
-mod scraper;
 mod queue;
-mod http_client;
+mod http;
+mod scraper;
 
 pub use cache::CachePort;
-pub use scraper::ScraperPort;
-pub use queue::{QueuePort, ScrapeJob, JobPriority};
-pub use http_client::{HttpClientPort, HttpResponse}; 
+pub use queue::QueuePort;
+pub use http::HttpClientPort;
+pub use scraper::ScraperPort; 

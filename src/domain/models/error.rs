@@ -1,33 +1,54 @@
 use std::fmt;
-use thiserror::Error;
 
-#[derive(Error, Debug)]
+pub type DomainResult<T> = Result<T, DomainError>;
+
+#[derive(Debug)]
 pub enum DomainError {
-    #[error("Validation error: {0}")]
-    Validation(String),
-    
-    #[error("Not found: {0}")]
     NotFound(String),
-    
-    #[error("Scraping error: {0}")]
+    Validation(String),
     Scraping(String),
-    
-    #[error("Cache error: {0}")]
     Cache(String),
-    
-    #[error("Queue error: {0}")]
     Queue(String),
-    
-    #[error("HTTP client error: {0}")]
-    HttpClient(String),
+    Http(String),
 }
 
 impl DomainError {
-    pub fn validation<T: fmt::Display>(msg: T) -> Self {
-        Self::Validation(msg.to_string())
+    pub fn not_found(msg: impl Into<String>) -> Self {
+        Self::NotFound(msg.into())
     }
 
-    pub fn not_found<T: fmt::Display>(msg: T) -> Self {
-        Self::NotFound(msg.to_string())
+    pub fn validation(msg: impl Into<String>) -> Self {
+        Self::Validation(msg.into())
     }
-} 
+
+    pub fn scraping(msg: impl Into<String>) -> Self {
+        Self::Scraping(msg.into())
+    }
+
+    pub fn cache(msg: impl Into<String>) -> Self {
+        Self::Cache(msg.into())
+    }
+
+    pub fn queue(msg: impl Into<String>) -> Self {
+        Self::Queue(msg.into())
+    }
+
+    pub fn http(msg: impl Into<String>) -> Self {
+        Self::Http(msg.into())
+    }
+}
+
+impl fmt::Display for DomainError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotFound(msg) => write!(f, "Not found: {}", msg),
+            Self::Validation(msg) => write!(f, "Validation error: {}", msg),
+            Self::Scraping(msg) => write!(f, "Scraping error: {}", msg),
+            Self::Cache(msg) => write!(f, "Cache error: {}", msg),
+            Self::Queue(msg) => write!(f, "Queue error: {}", msg),
+            Self::Http(msg) => write!(f, "HTTP error: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for DomainError {} 
