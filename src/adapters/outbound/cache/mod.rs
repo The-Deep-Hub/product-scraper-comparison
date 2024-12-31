@@ -1,1 +1,3 @@
-// Redis adapter will be implemented later 
+mod redis;
+
+pub use redis::RedisAdapter; 
