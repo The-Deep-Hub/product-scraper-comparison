@@ -1,1 +1,3 @@
-// RabbitMQ adapter will be implemented later 
+mod rabbitmq;
+
+pub use rabbitmq::{RabbitMQAdapter, Task}; 
