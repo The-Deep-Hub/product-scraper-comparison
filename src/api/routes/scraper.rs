@@ -54,15 +54,17 @@ pub async fn search_products(
     }
     
     // Try to get from store-specific caches first
-    let mut all_cached_products = Vec::new();
+    let mut cached_products = Vec::new();
     let mut missing_stores = Vec::new();
+    let mut found_stores = Vec::new();
     
     for store_name in &request.stores {
         if let Some(store) = Store::from_str(store_name) {
             match app_state.cache_port.get_store_products(&request.query, &store).await {
                 Ok(products) if !products.is_empty() => {
                     info!("Cache hit for store {} with {} products", store_name, products.len());
-                    all_cached_products.extend(products);
+                    cached_products.extend(products);
+                    found_stores.push(store_name.clone());
                 },
                 _ => {
                     info!("Cache miss for store {}", store_name);
@@ -75,11 +77,11 @@ pub async fn search_products(
         }
     }
     
-    // If we have all products from cache, return them
-    if missing_stores.is_empty() && !all_cached_products.is_empty() {
-        info!("All stores found in cache, returning {} products", all_cached_products.len());
+    // If we have all products from cache, return them immediately
+    if missing_stores.is_empty() {
+        info!("All stores found in cache, returning {} products", cached_products.len());
         let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-        for product in all_cached_products {
+        for product in cached_products {
             stores
                 .entry(product.store().to_string().to_lowercase())
                 .or_insert_with(Vec::new)
@@ -95,6 +97,16 @@ pub async fn search_products(
     
     // Create tasks only for stores that weren't in cache
     let mut task_ids = Vec::new();
+    
+    // Log which stores were found in cache and which need scraping
+    if !found_stores.is_empty() {
+        info!(
+            "Using cached results for stores: [{}], scraping for: [{}]",
+            found_stores.join(", "),
+            missing_stores.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
+        );
+    }
+    
     for (store_name, store) in missing_stores {
         match app_state.queue_port.enqueue_store_scrape_job(&request.query, &store).await {
             Ok(()) => {
@@ -117,12 +129,33 @@ pub async fn search_products(
         }
     }
     
-    let main_task_id = task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone();
-    Ok(HttpResponse::Accepted().json(SearchResponse {
-        task_id: main_task_id,
-        status: "processing".to_string(),
-        message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
-    }))
+    // If we have some cached results and some pending tasks
+    if !cached_products.is_empty() {
+        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+        for product in cached_products {
+            stores
+                .entry(product.store().to_string().to_lowercase())
+                .or_insert_with(Vec::new)
+                .push(product);
+        }
+        
+        Ok(HttpResponse::Accepted().json(SearchResponse {
+            task_id: task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone(),
+            status: "partial_content".to_string(),
+            message: format!(
+                "Found cached results for [{}]. Created {} tasks for remaining stores. Check status using the task ID.",
+                found_stores.join(", "),
+                task_ids.len()
+            ),
+        }))
+    } else {
+        // If all stores need to be scraped
+        Ok(HttpResponse::Accepted().json(SearchResponse {
+            task_id: task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone(),
+            status: "processing".to_string(),
+            message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
+        }))
+    }
 }
 
 #[get("/task/{task_id}")]
