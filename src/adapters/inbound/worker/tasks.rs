@@ -18,4 +18,4 @@ pub struct StoreResult {
     pub store: Store,
     pub products: Vec<crate::domain::models::product::Product>,
     pub created_at: DateTime<Utc>,
-}
+} 

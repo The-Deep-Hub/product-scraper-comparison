@@ -1,13 +1,17 @@
 use rust_scraper::{
-    adapters::outbound::{
-        cache::RedisAdapter,
-        queue::RabbitMQAdapter,
-        http::ZyteAdapter,
-        scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
+    adapters::{
+        outbound::{
+            cache::RedisAdapter,
+            queue::RabbitMQAdapter,
+            http::ZyteAdapter,
+            scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
+        },
     },
-    domain::ports::outbound::{ScraperPort},
+    domain::{
+        ports::outbound::ScraperPort,
+    },
     config::builder::AppConfig,
-    workers::processor::TaskProcessor,
+    TaskProcessor,
 };
 use tracing::info;
 use std::sync::Arc;

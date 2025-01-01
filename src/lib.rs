@@ -3,11 +3,11 @@ pub mod config;
 pub mod error;
 pub mod logging;
 pub mod middleware;
-pub mod workers;
 pub mod domain;
 pub mod adapters;
 
 pub use error::{AppError, AppResult};
+pub use adapters::inbound::{TaskProcessor, StoreTask, StoreResult};
 
 use adapters::inbound::api::ApiRoutes;
 use domain::{
