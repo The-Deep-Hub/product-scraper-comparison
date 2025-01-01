@@ -29,6 +29,7 @@ pub struct SearchResponse {
 pub struct TaskStatusResponse {
     status: String,
     stores: Option<HashMap<String, Vec<Product>>>,
+    pending_stores: Option<Vec<String>>,
     error: Option<String>,
 }
 
@@ -99,6 +100,7 @@ pub async fn search_products(
         return Ok(HttpResponse::Ok().json(TaskStatusResponse {
             status: "completed".to_string(),
             stores: Some(stores),
+            pending_stores: None,
             error: None,
         }));
     }
@@ -195,53 +197,54 @@ pub async fn get_task_status(
             
             // Split stores list into individual stores
             let store_names: Vec<&str> = stores_list.split(',').collect();
-            let mut all_products = Vec::new();
+            let mut available_stores = HashMap::new();
+            let mut pending_stores = Vec::new();
             
             // Get products for each store
             for store_name in store_names {
                 if let Some(store) = Store::from_str(store_name) {
                     match app_state.cache_port.get_store_products(query, &store).await {
                         Ok(products) if !products.is_empty() => {
-                            all_products.extend(products);
+                            info!("Found {} products for store {} and query {}", products.len(), store_name, query);
+                            available_stores.insert(store.to_string().to_lowercase(), products);
                         },
                         _ => {
-                            // If any store is still processing, return processing status
-                            return Ok(HttpResponse::Ok().json(TaskStatusResponse {
-                                status: "processing".to_string(),
-                                stores: None,
-                                error: None,
-                            }));
+                            info!("Store {} still processing for query {}", store_name, query);
+                            pending_stores.push(store_name.to_string());
                         }
                     }
                 }
             }
             
-            if !all_products.is_empty() {
-                // Group products by store
-                let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-                for product in all_products {
-                    stores
-                        .entry(product.store().to_string().to_lowercase())
-                        .or_insert_with(Vec::new)
-                        .push(product);
-                }
-                
-                Ok(HttpResponse::Ok().json(TaskStatusResponse {
-                    status: "completed".to_string(),
-                    stores: Some(stores),
-                    error: None,
-                }))
+            let status = if pending_stores.is_empty() {
+                "completed".to_string()
             } else {
-                Ok(HttpResponse::Ok().json(TaskStatusResponse {
-                    status: "processing".to_string(),
-                    stores: None,
-                    error: None,
-                }))
-            }
+                "processing".to_string()
+            };
+            
+            let pending_stores = if pending_stores.is_empty() {
+                None
+            } else {
+                Some(pending_stores)
+            };
+            
+            let stores = if available_stores.is_empty() {
+                None
+            } else {
+                Some(available_stores)
+            };
+            
+            Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                status,
+                stores,
+                pending_stores,
+                error: None,
+            }))
         },
         Ok(None) => Ok(HttpResponse::Ok().json(TaskStatusResponse {
             status: "not_found".to_string(),
             stores: None,
+            pending_stores: None,
             error: Some("Task not found".into()),
         })),
         Err(e) => {
