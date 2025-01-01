@@ -11,6 +11,12 @@ pub enum Store {
     Bricodepot,
 }
 
+impl Default for Store {
+    fn default() -> Self {
+        Store::LeroyMerlin
+    }
+}
+
 impl Store {
     pub fn as_str(&self) -> &'static str {
         match self {

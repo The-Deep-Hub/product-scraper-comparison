@@ -100,11 +100,13 @@ impl ProductUrls {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Product {
+    #[serde(rename = "id")]
     id: ProductId,
     name: String,
     description: String,
     price: Price,
     urls: ProductUrls,
+    #[serde(skip_serializing, default = "Store::default")]
     store: Store,
 }
 
