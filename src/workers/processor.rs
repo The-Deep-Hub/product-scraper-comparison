@@ -1,6 +1,4 @@
-use crate::domain::ports::outbound::{CachePort, QueuePort};
-use crate::domain::services::scraper::ScraperService;
-use crate::workers::tasks::{StoreTask, StoreResult};
+use crate::domain::ports::outbound::{CachePort, QueuePort, ScraperPort};
 use futures::StreamExt;
 use futures::stream::FuturesUnordered;
 use lapin::{
@@ -18,70 +16,72 @@ const DEFAULT_LIMIT: Option<usize> = Some(100); // Default limit for product scr
 
 pub struct TaskProcessor {
     amqp_url: String,
-    store_queues: Vec<String>,
+    queue_names: Vec<String>,
     cache_port: Arc<dyn CachePort>,
     queue_port: Arc<dyn QueuePort>,
-    scraper_service: Arc<ScraperService>,
+    scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
 }
 
 impl TaskProcessor {
     pub fn new(
         amqp_url: String,
-        store_queues: Vec<String>,
+        queue_names: Vec<String>,
         cache_port: Arc<dyn CachePort>,
         queue_port: Arc<dyn QueuePort>,
-        scraper_service: Arc<ScraperService>,
+        scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
     ) -> Self {
         Self {
             amqp_url,
-            store_queues,
+            queue_names,
             cache_port,
             queue_port,
-            scraper_service,
+            scrapers,
         }
     }
 
-    pub async fn run(&self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(&self) -> std::io::Result<()> {
         loop {
-            match self.setup_and_run_consumers().await {
+            match self.connect_and_process().await {
                 Ok(_) => {
-                    error!("Consumers stopped unexpectedly");
+                    info!("Connection closed, reconnecting...");
+                    sleep(RECONNECT_DELAY).await;
                 }
                 Err(e) => {
-                    error!("Consumer error: {}. Reconnecting in {} seconds...", e, RECONNECT_DELAY.as_secs());
+                    error!("Error processing tasks: {}", e);
+                    sleep(RECONNECT_DELAY).await;
                 }
             }
-            
-            sleep(RECONNECT_DELAY).await;
-            info!("Attempting to reconnect...");
         }
     }
 
-    async fn setup_and_run_consumers(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let conn = Connection::connect(
+    async fn connect_and_process(&self) -> std::io::Result<()> {
+        let connection = Connection::connect(
             &self.amqp_url,
             ConnectionProperties::default(),
-        ).await?;
-        
-        let channel = conn.create_channel().await?;
-        channel.basic_qos(PREFETCH_COUNT, BasicQosOptions::default()).await?;
+        ).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        let channel = connection.create_channel().await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+        // Set QoS
+        channel.basic_qos(PREFETCH_COUNT, BasicQosOptions::default())
+            .await
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
         let mut consumer_futures = FuturesUnordered::new();
         
-        // Start a consumer for each store queue
-        for queue_name in &self.store_queues {
+        // Start a consumer for each queue
+        for queue_name in &self.queue_names {
             info!("Starting consumer for queue: {}", queue_name);
             let mut consumer = channel.basic_consume(
                 queue_name,
                 &format!("task_processor_{}", queue_name),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
-            ).await?;
+            ).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-            let channel_clone = channel.clone();
-            let queue_name = queue_name.clone();
             let cache_port = self.cache_port.clone();
-            let scraper_service = self.scraper_service.clone();
+            let scrapers = self.scrapers.clone();
             
             // Process messages from this queue
             let future = async move {
@@ -90,53 +90,76 @@ impl TaskProcessor {
                 while let Some(delivery) = consumer.next().await {
                     match delivery {
                         Ok(delivery) => {
-                            let task: StoreTask = match serde_json::from_slice(&delivery.data) {
-                                Ok(task) => task,
+                            let task_str = match String::from_utf8(delivery.data.clone()) {
+                                Ok(s) => s,
                                 Err(e) => {
-                                    error!("Failed to parse task from queue {}: {}", queue_name, e);
+                                    error!("Failed to parse task data: {}", e);
                                     let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
                                     continue;
                                 }
                             };
                             
-                            info!("Received task: {} for query: {} from queue: {}", 
-                                task.id, task.query, queue_name);
+                            // Parse store and query from task
+                            let parts: Vec<&str> = task_str.split(':').collect();
+                            if parts.len() != 2 {
+                                error!("Invalid task format: {}", task_str);
+                                let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
+                                continue;
+                            }
                             
-                            let result = match scraper_service.scrape_products(&task.query, DEFAULT_LIMIT).await {
-                                Ok(products) => {
-                                    info!("Found {} products for query: {}", products.len(), task.query);
-                                    
-                                    // Cache the products
-                                    if let Err(e) = cache_port.cache_products(&task.query, &products).await {
-                                        error!("Failed to cache products for task {}: {}", task.id, e);
-                                        let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                        continue;
+                            let store = parts[0];
+                            let query = parts[1];
+                            
+                            info!("Processing task for store: {} and query: {}", store, query);
+                            
+                            // Find the appropriate scraper
+                            let scraper = scrapers.iter().find(|s| s.get_store().as_str().to_lowercase() == store.to_lowercase());
+                            
+                            match scraper {
+                                Some(scraper) => {
+                                    match scraper.scrape_products(query, DEFAULT_LIMIT).await {
+                                        Ok(products) => {
+                                            info!("Found {} products for query: {}", products.len(), query);
+                                            
+                                            // Cache the products
+                                            if let Err(e) = cache_port.cache_products(query, &products).await {
+                                                error!("Failed to cache products: {}", e);
+                                                let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
+                                                continue;
+                                            }
+                                            
+                                            info!("Stored results for query: {}", query);
+                                            let _ = delivery.ack(BasicAckOptions::default()).await;
+                                        }
+                                        Err(e) => {
+                                            error!("Failed to scrape products: {}", e);
+                                            let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
+                                        }
                                     }
-                                    
-                                    info!("Stored results for task {}", task.id);
-                                    let _ = delivery.ack(BasicAckOptions::default()).await;
                                 }
-                                Err(e) => {
-                                    error!("Failed to scrape products for task {}: {}", task.id, e);
+                                None => {
+                                    error!("No scraper found for store: {}", store);
                                     let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
                                 }
-                            };
+                            }
                         }
                         Err(e) => {
-                            error!("Error receiving message from queue {}: {}", queue_name, e);
+                            error!("Error receiving message: {}", e);
                         }
                     }
                 }
                 
-                Ok::<_, Box<dyn std::error::Error>>(())
+                Ok::<_, std::io::Error>(())
             };
             
             consumer_futures.push(future);
         }
-
-        // Wait for all consumers to complete (they should never complete unless there's an error)
+        
+        // Wait for all consumers to complete
         while let Some(result) = consumer_futures.next().await {
-            result?;
+            if let Err(e) = result {
+                error!("Consumer error: {}", e);
+            }
         }
         
         Ok(())

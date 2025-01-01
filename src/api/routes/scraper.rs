@@ -2,29 +2,20 @@ use std::sync::Arc;
 use std::collections::HashMap;
 use actix_web::{get, post, web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
 use tracing::{info, error};
 
 use crate::{
     error::{AppResult, AppError},
-    models::{
-        product::Product,
-        store::Store,
-        task::{MainTask, TaskStatus},
-    },
+    domain::models::product::Product,
+    domain::models::store::Store,
     core::app_state::AppState,
-    services::{
-        cache::CacheService,
-        queue::QueueService,
-        scraper::ScraperService,
-        task_splitter::TaskSplitterService,
-    },
 };
 
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
     query: String,
-    store: Option<Store>,
+    stores: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -50,7 +41,6 @@ pub async fn search_products(
     app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
     info!("Received search request: {:?}", request);
-    info!("Query: {}, Store: {:?}", request.query, request.store);
     
     // Validate request
     if request.query.trim().is_empty() {
@@ -58,121 +48,64 @@ pub async fn search_products(
         return Err(AppError::BadRequest("Search query cannot be empty".into()));
     }
     
+    if request.stores.is_empty() {
+        error!("No stores specified");
+        return Err(AppError::BadRequest("At least one store must be specified".into()));
+    }
+    
     // Try to get from cache first
-    if let Ok(Some(products)) = app_state.cache_service.get_search_results(&request.query).await {
-        info!("Cache hit, grouping {} products by store", products.len());
-        
-        // Group products by store
-        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-        for product in products {
-            stores
-                .entry(product.store.to_string().to_lowercase())
-                .or_insert_with(Vec::new)
-                .push(product);
-        }
-        
-        return Ok(HttpResponse::Ok().json(TaskStatusResponse {
-            status: "completed".to_string(),
-            stores: Some(stores),
-            error: None,
-        }));
-    }
-    
-    info!("Cache miss for query: {}", request.query);
-    
-    // Create main task
-    let main_task = MainTask::new(request.query.clone(), request.store);
-    info!("Created main task with ID: {}", main_task.id);
-    
-    if let Err(e) = app_state.cache_service.set_main_task(&main_task).await {
-        error!("Failed to set main task in cache: {}", e);
-        return Err(AppError::InternalServerError("Failed to create task".into()));
-    }
-    
-    info!("Created main task {} for query: {}", main_task.id, main_task.query);
-    
-    // Split task into store-specific tasks
-    if let Err(e) = app_state.task_splitter.split_task(&main_task).await {
-        error!("Failed to split task: {}", e);
-        return Err(AppError::InternalServerError("Failed to split task".into()));
-    }
-    
-    info!("Split task {} into store-specific tasks", main_task.id);
-    
-    // Wait for task completion with timeout
-    match timeout(TASK_TIMEOUT, async {
-        loop {
-            match app_state.cache_service.get_main_task(&main_task.id).await {
-                Ok(Some(task)) => {
-                    if task.is_complete() {
-                        // Combine all products from store results
-                        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-                        for (store, products) in task.store_results {
-                            stores.entry(store.to_string().to_lowercase()).or_insert_with(Vec::new).extend(products);
+    match app_state.cache_port.get_products(&request.query).await {
+        Ok(cached_products) if !cached_products.is_empty() => {
+            info!("Cache hit, grouping {} products by store", cached_products.len());
+            
+            // Group products by store
+            let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+            for product in cached_products {
+                stores
+                    .entry(product.store().to_string().to_lowercase())
+                    .or_insert_with(Vec::new)
+                    .push(product);
+            }
+            
+            Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                status: "completed".to_string(),
+                stores: Some(stores),
+                error: None,
+            }))
+        },
+        Ok(_) | Err(_) => {
+            info!("Cache miss for query: {}", request.query);
+            
+            // Create tasks for each store
+            let mut task_ids = Vec::new();
+            for store in &request.stores {
+                match app_state.queue_port.enqueue_scrape_job(&format!("{}:{}", store, request.query)).await {
+                    Ok(()) => {
+                        let task_id = uuid::Uuid::new_v4().to_string();
+                        task_ids.push(task_id.clone());
+                        
+                        // Store task ID to query mapping in Redis directly
+                        let task_key = format!("task_query:{}", task_id);
+                        let task_data = format!("{}:{}", store, request.query);
+                        if let Err(e) = app_state.cache_port.set_value(&task_key, &task_data, Some(300)).await {
+                            error!("Failed to store task query mapping: {}", e);
                         }
                         
-                        // Cache combined results
-                        if !stores.is_empty() {
-                            if let Err(e) = app_state.cache_service.set_search_results(&request.query, &stores.values().cloned().flatten().collect::<Vec<_>>()).await {
-                                error!("Failed to cache combined results: {}", e);
-                            }
-                        }
-                        
-                        info!("Task completed, returning {} stores", stores.len());
-                        return Ok(HttpResponse::Ok()
-                            .content_type("application/json")
-                            .json(TaskStatusResponse {
-                                status: "completed".to_string(),
-                                stores: Some(stores),
-                                error: None,
-                            }));
-                    } else if task.status == TaskStatus::Failed {
-                        error!("Task failed: {}", task.error.as_deref().unwrap_or("Unknown error"));
-                        return Ok(HttpResponse::InternalServerError()
-                            .content_type("application/json")
-                            .json(TaskStatusResponse {
-                                status: "failed".to_string(),
-                                stores: None,
-                                error: task.error,
-                            }));
+                        info!("Created task {} for store {} and query: {}", task_id, store, request.query);
+                    },
+                    Err(e) => {
+                        error!("Failed to create search task for store {}: {}", store, e);
+                        return Err(AppError::InternalServerError(format!("Failed to create search task for store {}: {}", store, e)));
                     }
-                    
-                    tokio::time::sleep(POLL_INTERVAL).await;
-                }
-                Ok(None) => {
-                    error!("Task not found in cache");
-                    return Ok(HttpResponse::NotFound()
-                        .content_type("application/json")
-                        .json(TaskStatusResponse {
-                            status: "error".to_string(),
-                            stores: None,
-                            error: Some("Task not found".to_string()),
-                        }));
-                }
-                Err(e) => {
-                    error!("Failed to check task status: {}", e);
-                    return Ok(HttpResponse::InternalServerError()
-                        .content_type("application/json")
-                        .json(TaskStatusResponse {
-                            status: "error".to_string(),
-                            stores: None,
-                            error: Some(format!("Failed to check task status: {}", e)),
-                        }));
                 }
             }
-        }
-    }).await {
-        Ok(result) => result,
-        Err(_) => {
-            // Timeout occurred - return a properly formatted JSON response
-            info!("Task processing timeout for ID: {}", main_task.id);
-            Ok(HttpResponse::Accepted()
-                .content_type("application/json")
-                .json(SearchResponse {
-                    task_id: main_task.id.clone(),
-                    status: "processing".to_string(),
-                    message: format!("Task {} is still processing. Please check status later using the task ID.", main_task.id),
-                }))
+            
+            let main_task_id = task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone();
+            Ok(HttpResponse::Accepted().json(SearchResponse {
+                task_id: main_task_id,
+                status: "processing".to_string(),
+                message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
+            }))
         }
     }
 }
@@ -182,54 +115,82 @@ pub async fn get_task_status(
     task_id: web::Path<String>,
     app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
-    let task = app_state.cache_service.get_main_task(&task_id).await?
-        .ok_or_else(|| AppError::NotFound("Task not found".to_string()))?;
-    
-    let response = if task.is_complete() {
-        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-        for (store, products) in task.store_results {
-            stores.entry(store.to_string().to_lowercase()).or_insert_with(Vec::new).extend(products);
-        }
-        
-        TaskStatusResponse {
-            status: "completed".to_string(),
-            stores: Some(stores),
-            error: None,
-        }
-    } else if task.status == TaskStatus::Failed {
-        TaskStatusResponse {
-            status: "failed".to_string(),
+    // Get the query from the task ID mapping
+    let task_key = format!("task_query:{}", task_id.as_str());
+    match app_state.cache_port.get_value(&task_key).await {
+        Ok(Some(task_data)) => {
+            let parts: Vec<&str> = task_data.split(':').collect();
+            if parts.len() != 2 {
+                return Err(AppError::InternalServerError("Invalid task data format".into()));
+            }
+            let (_store, query) = (parts[0], parts[1]);
+            
+            // Get products from cache since they should be there after processing
+            match app_state.cache_port.get_products(query).await {
+                Ok(products) if !products.is_empty() => {
+                    // Group products by store
+                    let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+                    for product in products {
+                        stores
+                            .entry(product.store().to_string().to_lowercase())
+                            .or_insert_with(Vec::new)
+                            .push(product);
+                    }
+                    
+                    Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                        status: "completed".to_string(),
+                        stores: Some(stores),
+                        error: None,
+                    }))
+                },
+                Ok(_) => Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                    status: "processing".to_string(),
+                    stores: None,
+                    error: None,
+                })),
+                Err(e) => {
+                    error!("Failed to get products from cache: {}", e);
+                    Err(AppError::InternalServerError(format!("Failed to get products from cache: {}", e)))
+                }
+            }
+        },
+        Ok(None) => Ok(HttpResponse::Ok().json(TaskStatusResponse {
+            status: "not_found".to_string(),
             stores: None,
-            error: task.error,
+            error: Some("Task not found".into()),
+        })),
+        Err(e) => {
+            error!("Failed to get task query mapping: {}", e);
+            Err(AppError::InternalServerError(format!("Failed to get task query mapping: {}", e)))
         }
-    } else {
-        TaskStatusResponse {
-            status: task.status.to_string().to_lowercase(),
-            stores: None,
-            error: None,
-        }
-    };
-    
-    Ok(HttpResponse::Ok().json(response))
+    }
 }
 
-#[get("/product")]
+#[get("/product/{url}")]
 pub async fn get_product_details(
-    url: web::Query<String>,
+    url: web::Path<String>,
     app_state: web::Data<AppState>,
 ) -> AppResult<impl Responder> {
     // Try to get from cache first
-    if let Ok(Some(product)) = app_state.cache_service.get_product_details(&url).await {
-        return Ok(HttpResponse::Ok().json(product));
+    match app_state.cache_port.get_products(&url).await {
+        Ok(cached_products) if !cached_products.is_empty() => {
+            Ok(HttpResponse::Ok().json(&cached_products[0]))
+        },
+        Ok(_) | Err(_) => {
+            // If not in cache, scrape it
+            match app_state.scraper_service.get_product_details(&url).await {
+                Ok(product) => {
+                    // Cache the result
+                    if let Err(e) = app_state.cache_port.cache_products(&url, &[product.clone()]).await {
+                        error!("Failed to cache product details: {}", e);
+                    }
+                    Ok(HttpResponse::Ok().json(product))
+                },
+                Err(e) => {
+                    error!("Failed to get product details: {}", e);
+                    Err(AppError::InternalServerError(format!("Failed to get product details: {}", e)))
+                }
+            }
+        }
     }
-
-    // If not in cache, scrape it
-    let product = app_state.scraper_service.get_product_details(&url).await?;
-
-    // Cache the result
-    if let Err(e) = app_state.cache_service.set_product_details(&product).await {
-        error!("Failed to cache product details: {}", e);
-    }
-
-    Ok(HttpResponse::Ok().json(product))
 }

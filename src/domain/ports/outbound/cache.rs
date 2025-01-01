@@ -1,12 +1,10 @@
 use async_trait::async_trait;
-
-use crate::domain::models::{Product, DomainResult};
+use crate::domain::models::{Product, DomainError};
 
 #[async_trait]
 pub trait CachePort: Send + Sync {
-    async fn get_products(&self, query: &str) -> DomainResult<Vec<Product>>;
-    
-    async fn cache_products(&self, query: &str, products: &[Product]) -> DomainResult<()>;
-    
-    async fn invalidate(&self, query: &str) -> DomainResult<()>;
+    async fn get_products(&self, key: &str) -> Result<Vec<Product>, DomainError>;
+    async fn cache_products(&self, key: &str, products: &[Product]) -> Result<(), DomainError>;
+    async fn set_value(&self, key: &str, value: &str, ttl_secs: Option<u64>) -> Result<(), DomainError>;
+    async fn get_value(&self, key: &str) -> Result<Option<String>, DomainError>;
 } 

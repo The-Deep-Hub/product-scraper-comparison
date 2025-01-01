@@ -1,44 +1,39 @@
 use rust_scraper::{
-    adapters::{
-        outbound::{
-            cache::RedisAdapter,
-            queue::RabbitMQAdapter,
-            http::ZyteAdapter,
-            scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
-        },
+    adapters::outbound::{
+        cache::RedisAdapter,
+        queue::RabbitMQAdapter,
+        http::ZyteAdapter,
+        scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
     },
-    domain::{
-        services::scraper::ScraperService,
-        ports::outbound::{HttpClientPort, ScraperPort},
-    },
-    workers::processor::TaskProcessor,
+    domain::ports::outbound::{ScraperPort},
     config::builder::AppConfig,
+    workers::processor::TaskProcessor,
 };
-use std::sync::Arc;
 use tracing::info;
+use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::io::Result<()> {
     // Initialize logging
     tracing_subscriber::fmt()
         .with_env_filter("rust_scraper=debug,worker=debug")
         .init();
 
     // Load configuration
-    let config = AppConfig::new()?;
+    let config = AppConfig::new().expect("Failed to load configuration");
 
     // Initialize adapters
-    let redis_adapter = Arc::new(RedisAdapter::new().await?);
+    let redis_adapter = Arc::new(RedisAdapter::new().await.expect("Failed to create Redis adapter"));
     let rabbitmq_adapter = Arc::new(RabbitMQAdapter::new(
         config.amqp_url(),
         config.redis_url(),
-    ).await?);
+    ).await.expect("Failed to create RabbitMQ adapter"));
     let zyte_adapter = Arc::new(ZyteAdapter::new(config.zyte.api_key.clone()));
 
     // Initialize scrapers
     let leroy_scraper = Arc::new(LeroyScraper::new(
         Box::new((*zyte_adapter).clone())
-    )?);
+    ).expect("Failed to create Leroy scraper"));
     let bauhaus_scraper = Arc::new(BauhausScraper::new(
         Box::new((*zyte_adapter).clone())
     ));
@@ -52,20 +47,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         bricodepot_scraper as Arc<dyn ScraperPort>,
     ];
 
-    // Initialize scraper service
-    let scraper_service = Arc::new(ScraperService::new(scrapers));
-
-    info!("Starting unified worker for queues: {:?}", config.worker.get_store_queues());
-
     // Create and run task processor with all store queues
     let processor = TaskProcessor::new(
         config.amqp_url(),
-        config.worker.get_store_queues(),
+        vec!["scraper_tasks".to_string()],
         redis_adapter,
         rabbitmq_adapter,
-        scraper_service,
+        Arc::new(scrapers),
     );
 
+    info!("Starting unified worker for queues: {:?}", vec!["scraper_tasks"]);
     processor.run().await?;
 
     Ok(())
