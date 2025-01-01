@@ -45,7 +45,7 @@ where
             }
         }
 
-        // Enqueue search job
+        // Enqueue search job for all stores
         self.queue.enqueue_scrape_job(query).await?;
 
         // Process the job
@@ -56,30 +56,21 @@ where
     }
 
     async fn search_store_products(&self, store: Store, query: &str) -> DomainResult<Vec<Product>> {
-        // Try to get from cache first
-        if let Ok(products) = self.cache.get_products(query).await {
-            let store_products: Vec<Product> = products
-                .into_iter()
-                .filter(|p| p.store() == store)
-                .collect();
-            
-            if !store_products.is_empty() {
-                return Ok(store_products);
+        // Try to get from store-specific cache first
+        if let Ok(products) = self.cache.get_store_products(query, &store).await {
+            if !products.is_empty() {
+                return Ok(products);
             }
         }
 
-        // Enqueue search job
-        self.queue.enqueue_scrape_job(query).await?;
+        // Enqueue search job for specific store
+        self.queue.enqueue_store_scrape_job(query, &store).await?;
 
-        // Process the job
-        self.queue.process_scrape_job(query).await?;
+        // Process the job for specific store
+        self.queue.process_store_scrape_job(query, &store).await?;
 
-        // Get results from cache and filter by store
-        let products = self.cache.get_products(query).await?;
-        Ok(products
-            .into_iter()
-            .filter(|p| p.store() == store)
-            .collect())
+        // Get results from store-specific cache
+        self.cache.get_store_products(query, &store).await
     }
 
     async fn get_product_details(&self, url: &str) -> DomainResult<Product> {

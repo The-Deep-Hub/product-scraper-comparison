@@ -10,8 +10,10 @@ use serde::{Serialize, Deserialize};
 use tracing::{info, error};
 use uuid::Uuid;
 
-use crate::domain::models::DomainError;
-use crate::domain::ports::outbound::QueuePort;
+use crate::domain::{
+    models::{DomainError, Store},
+    ports::outbound::QueuePort,
+};
 
 const MESSAGE_TTL: i32 = 300000; // 5 minutes in milliseconds
 const TASK_EXPIRY: i64 = 300; // 5 minutes in seconds
@@ -20,7 +22,7 @@ const TASK_EXPIRY: i64 = 300; // 5 minutes in seconds
 pub struct Task {
     pub id: String,
     pub query: String,
-    pub store: String,
+    pub store: Option<Store>,
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
 }
@@ -139,6 +141,46 @@ impl RabbitMQAdapter {
         
         Ok(())
     }
+
+    async fn create_and_store_task(&self, query: &str, store: Option<&Store>) -> Result<(), DomainError> {
+        let task_id = Uuid::new_v4().to_string();
+        let task = Task {
+            id: task_id.clone(),
+            query: query.to_string(),
+            store: store.cloned(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        
+        // Store task in Redis with expiration
+        let mut conn = self.redis.clone();
+        let task_key = Self::get_task_key(&task_id);
+        let task_json = serde_json::to_string(&task)
+            .map_err(|e| DomainError::queue(format!("Failed to serialize task: {}", e)))?;
+        
+        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await
+            .map_err(|e| DomainError::queue(format!("Failed to store task in Redis: {}", e)))?;
+        
+        // Create message payload with consistent format
+        let payload = match store {
+            Some(store) => format!("{}:{}", store.to_string().to_lowercase(), query),
+            None => format!("all:{}", query),
+        };
+        
+        info!("Publishing task with payload: {}", payload);
+        
+        // Publish to RabbitMQ with TTL
+        self.channel.basic_publish(
+            "",
+            &self.queue_name,
+            BasicPublishOptions::default(),
+            payload.as_bytes(),
+            BasicProperties::default()
+                .with_expiration(MESSAGE_TTL.to_string().into()),
+        ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -149,43 +191,16 @@ impl QueuePort for RabbitMQAdapter {
             error!("Failed to cleanup old tasks: {}", e);
         }
         
-        // Parse store and query from the input
-        let parts: Vec<&str> = query.split(':').collect();
-        if parts.len() != 2 {
-            return Err(DomainError::queue(format!("Invalid task format: {}", query)));
+        self.create_and_store_task(query, None).await
+    }
+
+    async fn enqueue_store_scrape_job(&self, query: &str, store: &Store) -> Result<(), DomainError> {
+        // Clean up old tasks first
+        if let Err(e) = self.cleanup_old_tasks().await {
+            error!("Failed to cleanup old tasks: {}", e);
         }
         
-        let store = parts[0];
-        let query = parts[1];
-        
-        let task_id = Uuid::new_v4().to_string();
-        let task = Task {
-            id: task_id.clone(),
-            query: query.to_string(),
-            store: store.to_string(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        
-        // Store task in Redis with expiration
-        let mut conn = self.redis.clone();
-        let task_key = Self::get_task_key(&task_id);
-        let task_json = serde_json::to_string(&task)
-            .map_err(|e| DomainError::queue(format!("Failed to serialize task: {}", e)))?;
-        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await
-            .map_err(|e| DomainError::queue(format!("Failed to store task in Redis: {}", e)))?;
-        
-        // Publish to RabbitMQ with TTL
-        self.channel.basic_publish(
-            "",
-            &self.queue_name,
-            BasicPublishOptions::default(),
-            format!("{}:{}", store, query).as_bytes(),
-            BasicProperties::default()
-                .with_expiration(MESSAGE_TTL.to_string().into()),
-        ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
-        
-        Ok(())
+        self.create_and_store_task(query, Some(store)).await
     }
     
     async fn process_scrape_job(&self, query: &str) -> Result<(), DomainError> {
@@ -210,6 +225,36 @@ impl QueuePort for RabbitMQAdapter {
             // Acknowledge the message
             delivery.ack(BasicAckOptions::default()).await
                 .map_err(|e| DomainError::queue(format!("Failed to acknowledge task: {}", e)))?;
+        }
+        
+        Ok(())
+    }
+
+    async fn process_store_scrape_job(&self, query: &str, store: &Store) -> Result<(), DomainError> {
+        if let Some(delivery) = self.channel.basic_get(
+            &self.queue_name,
+            BasicGetOptions::default(),
+        ).await.map_err(|e| DomainError::queue(format!("Failed to get task from queue: {}", e)))? {
+            let task_str = String::from_utf8(delivery.data.clone())
+                .map_err(|e| DomainError::queue(format!("Failed to parse task data: {}", e)))?;
+            
+            // Parse store and query from task
+            let parts: Vec<&str> = task_str.split(':').collect();
+            if parts.len() != 2 {
+                return Err(DomainError::queue(format!("Invalid task format: {}", task_str)));
+            }
+            
+            let task_store = parts[0];
+            let task_query = parts[1];
+            
+            // Only process if store matches
+            if task_store == store.to_string() && task_query == query {
+                info!("Processing task for store: {} and query: {}", store, query);
+                
+                // Acknowledge the message
+                delivery.ack(BasicAckOptions::default()).await
+                    .map_err(|e| DomainError::queue(format!("Failed to acknowledge task: {}", e)))?;
+            }
         }
         
         Ok(())

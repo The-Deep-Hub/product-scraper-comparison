@@ -53,61 +53,76 @@ pub async fn search_products(
         return Err(AppError::BadRequest("At least one store must be specified".into()));
     }
     
-    // Try to get from cache first
-    match app_state.cache_port.get_products(&request.query).await {
-        Ok(cached_products) if !cached_products.is_empty() => {
-            info!("Cache hit, grouping {} products by store", cached_products.len());
-            
-            // Group products by store
-            let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-            for product in cached_products {
-                stores
-                    .entry(product.store().to_string().to_lowercase())
-                    .or_insert_with(Vec::new)
-                    .push(product);
-            }
-            
-            Ok(HttpResponse::Ok().json(TaskStatusResponse {
-                status: "completed".to_string(),
-                stores: Some(stores),
-                error: None,
-            }))
-        },
-        Ok(_) | Err(_) => {
-            info!("Cache miss for query: {}", request.query);
-            
-            // Create tasks for each store
-            let mut task_ids = Vec::new();
-            for store in &request.stores {
-                match app_state.queue_port.enqueue_scrape_job(&format!("{}:{}", store, request.query)).await {
-                    Ok(()) => {
-                        let task_id = uuid::Uuid::new_v4().to_string();
-                        task_ids.push(task_id.clone());
-                        
-                        // Store task ID to query mapping in Redis directly
-                        let task_key = format!("task_query:{}", task_id);
-                        let task_data = format!("{}:{}", store, request.query);
-                        if let Err(e) = app_state.cache_port.set_value(&task_key, &task_data, Some(300)).await {
-                            error!("Failed to store task query mapping: {}", e);
-                        }
-                        
-                        info!("Created task {} for store {} and query: {}", task_id, store, request.query);
-                    },
-                    Err(e) => {
-                        error!("Failed to create search task for store {}: {}", store, e);
-                        return Err(AppError::InternalServerError(format!("Failed to create search task for store {}: {}", store, e)));
-                    }
+    // Try to get from store-specific caches first
+    let mut all_cached_products = Vec::new();
+    let mut missing_stores = Vec::new();
+    
+    for store_name in &request.stores {
+        if let Some(store) = Store::from_str(store_name) {
+            match app_state.cache_port.get_store_products(&request.query, &store).await {
+                Ok(products) if !products.is_empty() => {
+                    info!("Cache hit for store {} with {} products", store_name, products.len());
+                    all_cached_products.extend(products);
+                },
+                _ => {
+                    info!("Cache miss for store {}", store_name);
+                    missing_stores.push((store_name, store));
                 }
             }
-            
-            let main_task_id = task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone();
-            Ok(HttpResponse::Accepted().json(SearchResponse {
-                task_id: main_task_id,
-                status: "processing".to_string(),
-                message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
-            }))
+        } else {
+            error!("Invalid store name: {}", store_name);
+            return Err(AppError::BadRequest(format!("Invalid store name: {}", store_name)));
         }
     }
+    
+    // If we have all products from cache, return them
+    if missing_stores.is_empty() && !all_cached_products.is_empty() {
+        info!("All stores found in cache, returning {} products", all_cached_products.len());
+        let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+        for product in all_cached_products {
+            stores
+                .entry(product.store().to_string().to_lowercase())
+                .or_insert_with(Vec::new)
+                .push(product);
+        }
+        
+        return Ok(HttpResponse::Ok().json(TaskStatusResponse {
+            status: "completed".to_string(),
+            stores: Some(stores),
+            error: None,
+        }));
+    }
+    
+    // Create tasks only for stores that weren't in cache
+    let mut task_ids = Vec::new();
+    for (store_name, store) in missing_stores {
+        match app_state.queue_port.enqueue_store_scrape_job(&request.query, &store).await {
+            Ok(()) => {
+                let task_id = uuid::Uuid::new_v4().to_string();
+                task_ids.push(task_id.clone());
+                
+                // Store task ID to query mapping in Redis directly
+                let task_key = format!("task_query:{}", task_id);
+                let task_data = format!("{}:{}", store_name, request.query);
+                if let Err(e) = app_state.cache_port.set_value(&task_key, &task_data, Some(300)).await {
+                    error!("Failed to store task query mapping: {}", e);
+                }
+                
+                info!("Created task {} for store {} and query: {}", task_id, store_name, request.query);
+            },
+            Err(e) => {
+                error!("Failed to create search task for store {}: {}", store_name, e);
+                return Err(AppError::InternalServerError(format!("Failed to create search task for store {}: {}", store_name, e)));
+            }
+        }
+    }
+    
+    let main_task_id = task_ids.first().unwrap_or(&uuid::Uuid::new_v4().to_string()).clone();
+    Ok(HttpResponse::Accepted().json(SearchResponse {
+        task_id: main_task_id,
+        status: "processing".to_string(),
+        message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
+    }))
 }
 
 #[get("/task/{task_id}")]
@@ -123,35 +138,51 @@ pub async fn get_task_status(
             if parts.len() != 2 {
                 return Err(AppError::InternalServerError("Invalid task data format".into()));
             }
-            let (_store, query) = (parts[0], parts[1]);
+            let (store_name, query) = (parts[0], parts[1]);
             
-            // Get products from cache since they should be there after processing
-            match app_state.cache_port.get_products(query).await {
-                Ok(products) if !products.is_empty() => {
-                    // Group products by store
-                    let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
-                    for product in products {
-                        stores
-                            .entry(product.store().to_string().to_lowercase())
-                            .or_insert_with(Vec::new)
-                            .push(product);
+            // Parse store
+            let store = Store::from_str(store_name);
+            
+            // Try to get products from store-specific cache first
+            let products = if let Some(store) = store {
+                match app_state.cache_port.get_store_products(query, &store).await {
+                    Ok(products) if !products.is_empty() => products,
+                    _ => {
+                        // If no store-specific results, try all products cache
+                        match app_state.cache_port.get_products(query).await {
+                            Ok(all_products) => all_products.into_iter()
+                                .filter(|p| p.store().to_string().to_lowercase() == store_name.to_lowercase())
+                                .collect(),
+                            Err(_) => Vec::new(),
+                        }
                     }
-                    
-                    Ok(HttpResponse::Ok().json(TaskStatusResponse {
-                        status: "completed".to_string(),
-                        stores: Some(stores),
-                        error: None,
-                    }))
-                },
-                Ok(_) => Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                }
+            } else {
+                // If store is invalid, try all products cache
+                app_state.cache_port.get_products(query).await.unwrap_or_default()
+            };
+            
+            if !products.is_empty() {
+                // Group products by store
+                let mut stores: HashMap<String, Vec<Product>> = HashMap::new();
+                for product in products {
+                    stores
+                        .entry(product.store().to_string().to_lowercase())
+                        .or_insert_with(Vec::new)
+                        .push(product);
+                }
+                
+                Ok(HttpResponse::Ok().json(TaskStatusResponse {
+                    status: "completed".to_string(),
+                    stores: Some(stores),
+                    error: None,
+                }))
+            } else {
+                Ok(HttpResponse::Ok().json(TaskStatusResponse {
                     status: "processing".to_string(),
                     stores: None,
                     error: None,
-                })),
-                Err(e) => {
-                    error!("Failed to get products from cache: {}", e);
-                    Err(AppError::InternalServerError(format!("Failed to get products from cache: {}", e)))
-                }
+                }))
             }
         },
         Ok(None) => Ok(HttpResponse::Ok().json(TaskStatusResponse {
