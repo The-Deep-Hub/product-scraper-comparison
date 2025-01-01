@@ -7,7 +7,7 @@ use lapin::{
     Connection, ConnectionProperties,
 };
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::time::sleep;
 use tracing::{info, error};
 
@@ -17,7 +17,6 @@ const DEFAULT_LIMIT: Option<usize> = Some(100); // Default limit for product scr
 
 pub struct TaskProcessor {
     amqp_url: String,
-    queue_names: Vec<String>,
     cache_port: Arc<dyn CachePort>,
     queue_port: Arc<dyn QueuePort>,
     scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
@@ -26,18 +25,20 @@ pub struct TaskProcessor {
 impl TaskProcessor {
     pub fn new(
         amqp_url: String,
-        queue_names: Vec<String>,
         cache_port: Arc<dyn CachePort>,
         queue_port: Arc<dyn QueuePort>,
         scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
     ) -> Self {
         Self {
             amqp_url,
-            queue_names,
             cache_port,
             queue_port,
             scrapers,
         }
+    }
+
+    fn get_queue_name(store: &Store) -> String {
+        format!("scraper_tasks_{}", store.to_string().to_lowercase())
     }
 
     pub async fn run(&self) -> std::io::Result<()> {
@@ -71,125 +72,84 @@ impl TaskProcessor {
 
         let mut consumer_futures = FuturesUnordered::new();
         
-        // Start a consumer for each queue
-        for queue_name in &self.queue_names {
-            info!("Starting consumer for queue: {}", queue_name);
+        // Create a consumer for each store's queue
+        for scraper in self.scrapers.iter() {
+            let store = scraper.get_store();
+            let queue_name = Self::get_queue_name(&store);
+            
+            // Declare queue for this store
+            info!("Declaring queue for store {}: {}", store, queue_name);
+            channel.queue_declare(
+                &queue_name,
+                QueueDeclareOptions {
+                    durable: true,
+                    ..QueueDeclareOptions::default()
+                },
+                FieldTable::default(),
+            ).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+
+            info!("Starting consumer for store {} queue: {}", store, queue_name);
             let mut consumer = channel.basic_consume(
-                queue_name,
+                &queue_name,
                 &format!("task_processor_{}", queue_name),
                 BasicConsumeOptions::default(),
                 FieldTable::default(),
             ).await.map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
             let cache_port = self.cache_port.clone();
-            let scrapers = self.scrapers.clone();
+            let scraper = scraper.clone();
             
-            // Process messages from this queue
+            // Process messages for this store's queue
             let future = async move {
-                info!("Consumer started for queue: {}", queue_name);
+                info!("Consumer started for store {} queue: {}", store, queue_name);
                 
                 while let Some(delivery) = consumer.next().await {
                     match delivery {
                         Ok(delivery) => {
-                            let task_str = match String::from_utf8(delivery.data.clone()) {
+                            let query = match String::from_utf8(delivery.data.clone()) {
                                 Ok(s) => s,
                                 Err(e) => {
-                                    error!("Failed to parse task data: {}", e);
+                                    error!("Failed to parse query data: {}", e);
                                     let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
                                     continue;
                                 }
                             };
                             
-                            // Parse store and query from task
-                            let parts: Vec<&str> = task_str.split(':').collect();
-                            if parts.len() != 2 {
-                                error!("Invalid task format: {}", task_str);
-                                let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                continue;
-                            }
+                            let start_time = Instant::now();
+                            info!("Starting task for store {} and query: {} at {:?}", store, query, start_time);
                             
-                            let store = parts[0];
-                            let query = parts[1];
-                            
-                            info!("Processing task for store: {} and query: {}", store, query);
-                            
-                            // Handle "all" store case
-                            if store == "all" {
-                                let mut all_products = Vec::new();
-                                
-                                // Scrape products from all scrapers
-                                for scraper in scrapers.iter() {
-                                    match scraper.scrape_products(query, DEFAULT_LIMIT).await {
-                                        Ok(products) => {
-                                            info!("Found {} products for store {} and query: {}", 
-                                                products.len(), 
-                                                scraper.get_store(), 
-                                                query
-                                            );
-                                            all_products.extend(products);
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to scrape products from {}: {}", scraper.get_store(), e);
-                                            // Continue with other scrapers even if one fails
-                                            continue;
-                                        }
+                            match scraper.scrape_products(&query, DEFAULT_LIMIT).await {
+                                Ok(products) => {
+                                    let scraping_duration = start_time.elapsed();
+                                    info!(
+                                        "Found {} products for store {} and query: {} in {:?}",
+                                        products.len(), store, query, scraping_duration
+                                    );
+                                    
+                                    let cache_start = Instant::now();
+                                    // Cache both store-specific and all products
+                                    if let Err(e) = cache_port.cache_store_products(&query, &store, &products).await {
+                                        error!("Failed to cache store products: {}", e);
+                                        let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
+                                        continue;
                                     }
-                                }
-                                
-                                // Cache all products
-                                if let Err(e) = cache_port.cache_products(query, &all_products).await {
-                                    error!("Failed to cache products: {}", e);
-                                    let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                    continue;
-                                }
-                                
-                                info!("Stored results for all stores, query: {}", query);
-                                let _ = delivery.ack(BasicAckOptions::default()).await;
-                                continue;
-                            }
-                            
-                            // Handle store-specific case
-                            let store_enum = match Store::from_str(store) {
-                                Some(s) => s,
-                                None => {
-                                    error!("Invalid store name: {}", store);
-                                    let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                    continue;
-                                }
-                            };
-                            
-                            let scraper = scrapers.iter().find(|s| s.get_store() == store_enum);
-                            
-                            match scraper {
-                                Some(scraper) => {
-                                    match scraper.scrape_products(query, DEFAULT_LIMIT).await {
-                                        Ok(products) => {
-                                            info!("Found {} products for query: {}", products.len(), query);
-                                            
-                                            // Cache both store-specific and all products
-                                            if let Err(e) = cache_port.cache_store_products(query, &store_enum, &products).await {
-                                                error!("Failed to cache store products: {}", e);
-                                                let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                                continue;
-                                            }
-                                            
-                                            // Also cache in the all-products cache
-                                            if let Err(e) = cache_port.cache_products(query, &products).await {
-                                                error!("Failed to cache all products: {}", e);
-                                                // Don't reject if at least store-specific cache worked
-                                            }
-                                            
-                                            info!("Stored results for store: {}, query: {}", store, query);
-                                            let _ = delivery.ack(BasicAckOptions::default()).await;
-                                        }
-                                        Err(e) => {
-                                            error!("Failed to scrape products: {}", e);
-                                            let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
-                                        }
+                                    
+                                    // Also cache in the all-products cache
+                                    if let Err(e) = cache_port.cache_products(&query, &products).await {
+                                        error!("Failed to cache all products: {}", e);
+                                        // Don't reject if at least store-specific cache worked
                                     }
+                                    
+                                    let cache_duration = cache_start.elapsed();
+                                    info!(
+                                        "Stored results for store: {}, query: {} - Scraping took {:?}, Caching took {:?}",
+                                        store, query, scraping_duration, cache_duration
+                                    );
+                                    let _ = delivery.ack(BasicAckOptions::default()).await;
                                 }
-                                None => {
-                                    error!("No scraper found for store: {}", store);
+                                Err(e) => {
+                                    error!("Failed to scrape products for store {} after {:?}: {}", 
+                                        store, start_time.elapsed(), e);
                                     let _ = delivery.reject(BasicRejectOptions { requeue: false }).await;
                                 }
                             }

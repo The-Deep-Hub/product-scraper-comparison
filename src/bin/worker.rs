@@ -47,16 +47,15 @@ async fn main() -> std::io::Result<()> {
         bricodepot_scraper as Arc<dyn ScraperPort>,
     ];
 
-    // Create and run task processor with all store queues
+    // Create and run task processor
     let processor = TaskProcessor::new(
         config.amqp_url(),
-        vec!["scraper_tasks".to_string()],
-        redis_adapter,
-        rabbitmq_adapter,
+        redis_adapter.clone(),
+        rabbitmq_adapter.clone(),
         Arc::new(scrapers),
     );
 
-    info!("Starting unified worker for queues: {:?}", vec!["scraper_tasks"]);
+    info!("Starting worker for store-specific queues");
     processor.run().await?;
 
     Ok(())
