@@ -1,6 +1,5 @@
-use std::sync::Arc;
 use std::collections::HashMap;
-use actix_web::{get, post, web, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use tokio::time::Duration;
 use tracing::{info, error};
@@ -9,7 +8,8 @@ use crate::{
     error::{AppResult, AppError},
     domain::models::product::Product,
     domain::models::store::Store,
-    core::app_state::AppState,
+    api::AppState,
+    domain::ports::outbound::{CachePort, QueuePort},
 };
 
 #[derive(Debug, Deserialize)]
@@ -36,11 +36,14 @@ pub struct TaskStatusResponse {
 const TASK_TIMEOUT: Duration = Duration::from_secs(180); // 3 minutes
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
-#[post("/search")]
-pub async fn search_products(
+pub async fn search_products<C, Q>(
     request: web::Json<SearchRequest>,
-    app_state: web::Data<AppState>,
-) -> AppResult<impl Responder> {
+    app_state: web::Data<AppState<C, Q>>,
+) -> AppResult<impl Responder> 
+where
+    C: CachePort + 'static,
+    Q: QueuePort + 'static,
+{
     info!("Received search request: {:?}", request);
     
     // Validate request
@@ -180,11 +183,14 @@ pub async fn search_products(
     }
 }
 
-#[get("/task/{task_id}")]
-pub async fn get_task_status(
+pub async fn get_task_status<C, Q>(
     task_id: web::Path<String>,
-    app_state: web::Data<AppState>,
-) -> AppResult<impl Responder> {
+    app_state: web::Data<AppState<C, Q>>,
+) -> AppResult<impl Responder>
+where
+    C: CachePort + 'static,
+    Q: QueuePort + 'static,
+{
     // Get the query from the task ID mapping
     let task_key = format!("task_query:{}", task_id.as_str());
     match app_state.cache_port.get_value(&task_key).await {
@@ -254,11 +260,14 @@ pub async fn get_task_status(
     }
 }
 
-#[get("/product/{url}")]
-pub async fn get_product_details(
+pub async fn get_product_details<C, Q>(
     url: web::Path<String>,
-    app_state: web::Data<AppState>,
-) -> AppResult<impl Responder> {
+    app_state: web::Data<AppState<C, Q>>,
+) -> AppResult<impl Responder>
+where
+    C: CachePort + 'static,
+    Q: QueuePort + 'static,
+{
     // Try to get from cache first
     match app_state.cache_port.get_products(&url).await {
         Ok(cached_products) if !cached_products.is_empty() => {

@@ -11,14 +11,13 @@ use rust_scraper::{
             http::ZyteAdapter,
             scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
         },
-        inbound::api::Logger,
     },
     domain::{
         services::scraper::ScraperService,
-        ports::outbound::{HttpClientPort, ScraperPort},
+        ports::outbound::ScraperPort,
     },
     config::builder::AppConfig,
-    core::app_state::AppState,
+    api::{self, AppState},
 };
 
 #[actix_web::main]
@@ -60,7 +59,7 @@ async fn main() -> std::io::Result<()> {
     let scraper_service = Arc::new(ScraperService::new(scrapers));
     
     // Create app state
-    let app_state = web::Data::new(AppState::new(
+    let app_state = web::Data::new(AppState::<RedisAdapter, RabbitMQAdapter>::new(
         scraper_service,
         redis_adapter.clone(),
         rabbitmq_adapter.clone(),
@@ -78,14 +77,8 @@ async fn main() -> std::io::Result<()> {
 
         App::new()
             .wrap(cors)
-            .wrap(Logger)
             .app_data(app_state.clone())
-            .configure(|cfg| {
-                cfg.service(
-                    web::scope("/api")
-                        .configure(rust_scraper::api::routes::configure)
-                );
-            })
+            .configure(api::configure::<RedisAdapter, RabbitMQAdapter>)
     })
     .bind(config.server_addr())?
     .run()

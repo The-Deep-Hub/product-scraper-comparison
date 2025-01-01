@@ -1,7 +1,5 @@
 pub mod api;
 pub mod config;
-pub mod core;
-pub mod db;
 pub mod error;
 pub mod logging;
 pub mod middleware;
