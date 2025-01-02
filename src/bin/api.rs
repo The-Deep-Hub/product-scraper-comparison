@@ -17,7 +17,7 @@ use rust_scraper::{
         services::scraper::ScraperService,
         ports::outbound::ScraperPort,
     },
-    config::{app_config::AppConfig, builder},
+    config::builder,
 };
 
 #[actix_web::main]
@@ -56,7 +56,7 @@ async fn main() -> std::io::Result<()> {
     ];
 
     // Initialize scraper service
-    let scraper_service = Arc::new(ScraperService::new(scrapers));
+    let _scraper_service = Arc::new(ScraperService::new(scrapers));
     
     info!("Starting HTTP server at {}", config.server_addr());
 

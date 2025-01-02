@@ -10,7 +10,7 @@ use rust_scraper::{
     domain::{
         ports::outbound::ScraperPort,
     },
-    config::{app_config::AppConfig, builder},
+    config::builder,
     TaskProcessor,
 };
 use tracing::info;
