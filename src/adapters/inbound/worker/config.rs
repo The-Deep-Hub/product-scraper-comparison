@@ -1,8 +1,9 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 
-#[derive(Debug, Deserialize, Clone)]
-pub struct Config {
+/// Worker configuration
+#[derive(Debug, Clone, Deserialize)]
+pub struct WorkerConfig {
     #[serde(default = "default_prefetch_count")]
     pub prefetch_count: u16,
     #[serde(default = "default_reconnect_delay")]
@@ -33,7 +34,7 @@ fn default_store_queues() -> HashMap<String, String> {
     queues
 }
 
-impl Default for Config {
+impl Default for WorkerConfig {
     fn default() -> Self {
         Self {
             prefetch_count: default_prefetch_count(),
@@ -44,11 +45,13 @@ impl Default for Config {
     }
 }
 
-impl Config {
+impl WorkerConfig {
+    /// Gets all store queue names
     pub fn get_store_queues(&self) -> Vec<String> {
         self.store_queues.values().cloned().collect()
     }
 
+    /// Gets the product limit
     pub fn get_product_limit(&self) -> Option<usize> {
         Some(self.product_limit)
     }

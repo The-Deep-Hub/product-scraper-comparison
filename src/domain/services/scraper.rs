@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use async_trait::async_trait;
 
 use crate::domain::models::{Product, Store, DomainResult, DomainError};
 use crate::domain::ports::outbound::ScraperPort;

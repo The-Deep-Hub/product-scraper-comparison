@@ -1,2 +1,5 @@
 pub mod rabbitmq;
-pub use rabbitmq::RabbitMQAdapter; 
+pub mod config;
+
+pub use rabbitmq::RabbitMQAdapter;
+pub use config::RabbitMQConfig; 

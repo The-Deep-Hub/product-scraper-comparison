@@ -17,7 +17,7 @@ use rust_scraper::{
         services::scraper::ScraperService,
         ports::outbound::ScraperPort,
     },
-    config::builder::AppConfig,
+    config::{app_config::AppConfig, builder},
 };
 
 #[actix_web::main]
@@ -28,7 +28,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     // Load configuration
-    let config = AppConfig::new().expect("Failed to load configuration");
+    let config = builder::new().expect("Failed to load configuration");
 
     // Initialize adapters
     let redis_adapter = RedisAdapter::new().await.expect("Failed to create Redis adapter");

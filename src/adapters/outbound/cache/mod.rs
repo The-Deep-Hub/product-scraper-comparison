@@ -1,2 +1,5 @@
 pub mod redis;
-pub use redis::RedisAdapter; 
+pub mod config;
+
+pub use redis::RedisAdapter;
+pub use config::RedisConfig; 

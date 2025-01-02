@@ -10,7 +10,7 @@ use rust_scraper::{
     domain::{
         ports::outbound::ScraperPort,
     },
-    config::builder::AppConfig,
+    config::{app_config::AppConfig, builder},
     TaskProcessor,
 };
 use tracing::info;
@@ -24,7 +24,7 @@ async fn main() -> std::io::Result<()> {
         .init();
 
     // Load configuration
-    let config = AppConfig::new().expect("Failed to load configuration");
+    let config = builder::new().expect("Failed to load configuration");
 
     // Initialize adapters
     let redis_adapter = Arc::new(RedisAdapter::new().await.expect("Failed to create Redis adapter"));
