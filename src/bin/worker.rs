@@ -8,7 +8,7 @@ use rust_scraper::{
         },
     },
     domain::{
-        ports::outbound::ScraperPort,
+        ports::outbound::{ScraperPort, CachePort, QueuePort},
     },
     config::builder,
     TaskProcessor,
@@ -53,9 +53,8 @@ async fn main() -> std::io::Result<()> {
 
     // Create and run task processor
     let processor = TaskProcessor::new(
-        config.amqp_url(),
-        redis_adapter.clone(),
-        rabbitmq_adapter.clone(),
+        redis_adapter as Arc<dyn CachePort>,
+        rabbitmq_adapter as Arc<dyn QueuePort>,
         Arc::new(scrapers),
     );
 

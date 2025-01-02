@@ -46,20 +46,6 @@ impl RedisAdapter {
         
         Ok(())
     }
-
-    async fn invalidate_all_keys(&self, query: &str) -> Result<(), DomainError> {
-        let mut conn = self.client.clone();
-        let pattern = format!("products:{}:*", query);
-        
-        let keys: Vec<String> = conn.keys(&pattern).await
-            .map_err(|e| DomainError::cache(format!("Failed to get keys for pattern {}: {}", pattern, e)))?;
-        
-        for key in keys {
-            let _: Option<()> = conn.del(&key).await
-                .map_err(|e| DomainError::cache(format!("Failed to delete key {}: {}", key, e)))?;
-        }
-        Ok(())
-    }
 }
 
 #[async_trait]

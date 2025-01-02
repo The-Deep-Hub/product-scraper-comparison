@@ -1,5 +1,5 @@
 use async_trait::async_trait;
-use scraper::{Html, ElementRef, Selector};
+use scraper::{Html, Selector};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use url::Url;

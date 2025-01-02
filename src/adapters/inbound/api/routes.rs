@@ -1,5 +1,4 @@
 use actix_web::{web, HttpResponse, Responder};
-use std::time::Duration;
 use tracing::{info, error};
 use uuid::Uuid;
 

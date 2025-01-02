@@ -1,22 +1,25 @@
 use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
+use futures::StreamExt;
 use lapin::{
     options::*, types::{FieldTable, AMQPValue}, BasicProperties,
-    Connection, ConnectionProperties, Channel,
+    Connection, ConnectionProperties, Channel, Consumer,
 };
 use redis::{aio::ConnectionManager, AsyncCommands};
 use serde::{Serialize, Deserialize};
+use tokio::sync::mpsc;
 use tracing::{info, error};
 use uuid::Uuid;
 
 use crate::domain::{
-    models::{DomainError, Store},
+    models::{DomainError, Store, DomainResult},
     ports::outbound::QueuePort,
 };
 
 const MESSAGE_TTL: i32 = 300000; // 5 minutes in milliseconds
 const TASK_EXPIRY: i64 = 300; // 5 minutes in seconds
+const PREFETCH_COUNT: u16 = 1; // Number of messages to prefetch per consumer
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Task {
@@ -54,6 +57,11 @@ impl RabbitMQAdapter {
         
         let channel = Arc::new(connection.create_channel().await
             .map_err(|e| DomainError::queue(format!("Failed to create channel: {}", e)))?);
+
+        // Set QoS for the channel
+        channel.basic_qos(PREFETCH_COUNT, BasicQosOptions::default())
+            .await
+            .map_err(|e| DomainError::queue(format!("Failed to set QoS: {}", e)))?;
         
         // Initialize Redis connection
         let redis = redis::Client::open(redis_url)
@@ -255,11 +263,123 @@ impl RabbitMQAdapter {
         
         Ok(())
     }
+
+    async fn get_value(&self, key: &str) -> DomainResult<Option<String>> {
+        let mut conn = self.redis.clone();
+        conn.get(key).await
+            .map_err(|e| DomainError::queue(format!("Failed to get value from Redis: {}", e)))
+    }
+
+    async fn publish_task(&self, query: &str, store: Option<&Store>) -> DomainResult<()> {
+        // Clean up old tasks first
+        if let Err(e) = self.cleanup_old_tasks().await {
+            error!("Failed to cleanup old tasks: {}", e);
+        }
+
+        let task_id = Uuid::new_v4().to_string();
+        let task = Task {
+            id: task_id.clone(),
+            query: query.to_string(),
+            store: store.cloned(),
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        
+        // Store task in Redis with expiration
+        let mut conn = self.redis.clone();
+        let task_key = Self::get_task_key(&task_id);
+        let task_json = serde_json::to_string(&task)
+            .map_err(|e| DomainError::queue(format!("Failed to serialize task: {}", e)))?;
+        
+        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await
+            .map_err(|e| DomainError::queue(format!("Failed to store task in Redis: {}", e)))?;
+        
+        match store {
+            Some(store) => {
+                // Ensure queue exists and publish to store-specific queue
+                self.ensure_queue_exists(store).await?;
+                let queue_name = Self::get_queue_name(store);
+                
+                info!("Publishing task to queue {}: {}", queue_name, query);
+                
+                self.channel.basic_publish(
+                    "",
+                    &queue_name,
+                    BasicPublishOptions::default(),
+                    query.as_bytes(),
+                    BasicProperties::default()
+                        .with_expiration(MESSAGE_TTL.to_string().into()),
+                ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
+            },
+            None => {
+                // For all-stores case, publish to each store's queue
+                for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+                    self.ensure_queue_exists(store).await?;
+                    let queue_name = Self::get_queue_name(store);
+                    
+                    info!("Publishing task to queue {}: {}", queue_name, query);
+                    
+                    self.channel.basic_publish(
+                        "",
+                        &queue_name,
+                        BasicPublishOptions::default(),
+                        query.as_bytes(),
+                        BasicProperties::default()
+                            .with_expiration(MESSAGE_TTL.to_string().into()),
+                    ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
+                }
+            }
+        }
+        
+        Ok(())
+    }
+
+    async fn setup_consumer(&self, store: &Store) -> Result<Consumer, DomainError> {
+        self.ensure_queue_exists(store).await?;
+        let queue_name = Self::get_queue_name(store);
+        
+        let consumer = self.channel.basic_consume(
+            &queue_name,
+            &format!("consumer-{}", Uuid::new_v4()),
+            BasicConsumeOptions::default(),
+            FieldTable::default(),
+        ).await.map_err(|e| DomainError::queue(format!("Failed to create consumer for {}: {}", queue_name, e)))?;
+
+        Ok(consumer)
+    }
+
+    pub async fn consume_messages(&self, store: &Store, tx: mpsc::Sender<(String, Store)>) -> Result<(), DomainError> {
+        let mut consumer = self.setup_consumer(store).await?;
+        
+        while let Some(delivery) = consumer.next().await {
+            match delivery {
+                Ok(delivery) => {
+                    let query = String::from_utf8_lossy(&delivery.data).to_string();
+                    
+                    // Send the message to the channel for processing
+                    if let Err(e) = tx.send((query.clone(), store.clone())).await {
+                        error!("Failed to send message to processor: {}", e);
+                        continue;
+                    }
+                    
+                    // Acknowledge the message
+                    if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                }
+            }
+        }
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
 impl QueuePort for RabbitMQAdapter {
-    async fn enqueue_scrape_job(&self, query: &str) -> Result<(), DomainError> {
+    async fn enqueue_scrape_job(&self, query: &str) -> DomainResult<()> {
         // Clean up old tasks first
         if let Err(e) = self.cleanup_old_tasks().await {
             error!("Failed to cleanup old tasks: {}", e);
@@ -283,52 +403,19 @@ impl QueuePort for RabbitMQAdapter {
         Ok(())
     }
 
-    async fn enqueue_store_scrape_job(&self, query: &str, store: &Store) -> Result<(), DomainError> {
-        // Clean up old tasks first
-        if let Err(e) = self.cleanup_old_tasks().await {
-            error!("Failed to cleanup old tasks: {}", e);
+    async fn enqueue_store_scrape_job(&self, query: &str, store: &Store) -> DomainResult<()> {
+        self.publish_task(query, Some(store)).await
+    }
+    
+    async fn process_scrape_job(&self, query: &str) -> DomainResult<()> {
+        // Process jobs from all store queues
+        for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+            self.process_store_scrape_job(query, store).await?;
         }
-        
-        // Ensure queue exists and publish to store-specific queue
-        self.ensure_queue_exists(store).await?;
-        let queue_name = Self::get_queue_name(store);
-        
-        self.channel.basic_publish(
-            "",
-            &queue_name,
-            BasicPublishOptions::default(),
-            query.as_bytes(),
-            BasicProperties::default()
-                .with_expiration(MESSAGE_TTL.to_string().into()),
-        ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
-        
         Ok(())
     }
     
-    async fn process_scrape_job(&self, _query: &str) -> Result<(), DomainError> {
-        // Process jobs from all store queues
-        for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
-            let queue_name = Self::get_queue_name(store);
-            
-            if let Some(delivery) = self.channel.basic_get(
-                &queue_name,
-                BasicGetOptions::default(),
-            ).await.map_err(|e| DomainError::queue(format!("Failed to get task from queue {}: {}", queue_name, e)))? {
-                let query_str = String::from_utf8(delivery.data.clone())
-                    .map_err(|e| DomainError::queue(format!("Failed to parse query data: {}", e)))?;
-                
-                info!("Processing task for store: {} and query: {}", store, query_str);
-                
-                // Acknowledge the message
-                delivery.ack(BasicAckOptions::default()).await
-                    .map_err(|e| DomainError::queue(format!("Failed to acknowledge task: {}", e)))?;
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn process_store_scrape_job(&self, _query: &str, store: &Store) -> Result<(), DomainError> {
+    async fn process_store_scrape_job(&self, _query: &str, store: &Store) -> DomainResult<Option<String>> {
         let queue_name = Self::get_queue_name(store);
         
         if let Some(delivery) = self.channel.basic_get(
@@ -343,6 +430,42 @@ impl QueuePort for RabbitMQAdapter {
             // Acknowledge the message
             delivery.ack(BasicAckOptions::default()).await
                 .map_err(|e| DomainError::queue(format!("Failed to acknowledge task: {}", e)))?;
+
+            Ok(Some(query_str))
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn get_value(&self, key: &str) -> DomainResult<Option<String>> {
+        let mut conn = self.redis.clone();
+        conn.get(key).await
+            .map_err(|e| DomainError::queue(format!("Failed to get value from Redis: {}", e)))
+    }
+
+    async fn consume_messages(&self, store: &Store, tx: mpsc::Sender<(String, Store)>) -> DomainResult<()> {
+        let mut consumer = self.setup_consumer(store).await?;
+        
+        while let Some(delivery) = consumer.next().await {
+            match delivery {
+                Ok(delivery) => {
+                    let query = String::from_utf8_lossy(&delivery.data).to_string();
+                    
+                    // Send the message to the channel for processing
+                    if let Err(e) = tx.send((query.clone(), store.clone())).await {
+                        error!("Failed to send message to processor: {}", e);
+                        continue;
+                    }
+                    
+                    // Acknowledge the message
+                    if let Err(e) = delivery.ack(BasicAckOptions::default()).await {
+                        error!("Failed to acknowledge message: {}", e);
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                }
+            }
         }
         
         Ok(())
