@@ -7,6 +7,8 @@ use serde_json::Error as JsonError;
 use reqwest::Error as ReqwestError;
 use std::error::Error as StdError;
 use serde::Serialize;
+use std::io;
+use crate::domain::models::DomainError;
 
 #[derive(Debug, Display)]
 pub enum AppError {
@@ -80,6 +82,31 @@ impl From<JsonError> for AppError {
 impl From<ReqwestError> for AppError {
     fn from(error: ReqwestError) -> Self {
         AppError::ScraperError(error.to_string())
+    }
+}
+
+impl From<io::Error> for AppError {
+    fn from(error: io::Error) -> Self {
+        AppError::InternalServerError(error.to_string())
+    }
+}
+
+impl From<AppError> for io::Error {
+    fn from(error: AppError) -> Self {
+        io::Error::new(io::ErrorKind::Other, error.to_string())
+    }
+}
+
+impl From<DomainError> for AppError {
+    fn from(error: DomainError) -> Self {
+        match error {
+            DomainError::Cache(msg) => AppError::CacheError(msg),
+            DomainError::Queue(msg) => AppError::QueueError(msg),
+            DomainError::Scraping(msg) => AppError::ScraperError(msg),
+            DomainError::Http(msg) => AppError::InternalServerError(msg),
+            DomainError::Validation(msg) => AppError::BadRequest(msg),
+            DomainError::NotFound(msg) => AppError::NotFound(msg),
+        }
     }
 }
 

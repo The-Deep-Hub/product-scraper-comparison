@@ -1,4 +1,7 @@
-use crate::domain::ports::outbound::{CachePort, QueuePort, ScraperPort};
+use crate::domain::{
+    ports::outbound::{QueuePort, ScraperPort, EventPublisherPort},
+    events::{DomainEvent, EventMetadata},
+};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
@@ -11,21 +14,21 @@ const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const CHANNEL_BUFFER_SIZE: usize = 100;
 
 pub struct TaskProcessor {
-    cache_port: Arc<dyn CachePort>,
     queue_port: Arc<dyn QueuePort>,
     scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
+    event_publisher: Arc<dyn EventPublisherPort>,
 }
 
 impl TaskProcessor {
     pub fn new(
-        cache_port: Arc<dyn CachePort>,
         queue_port: Arc<dyn QueuePort>,
         scrapers: Arc<Vec<Arc<dyn ScraperPort>>>,
+        event_publisher: Arc<dyn EventPublisherPort>,
     ) -> Self {
         Self {
-            cache_port,
             queue_port,
             scrapers,
+            event_publisher,
         }
     }
 
@@ -33,70 +36,80 @@ impl TaskProcessor {
         let (tx, mut rx) = mpsc::channel(CHANNEL_BUFFER_SIZE);
         let mut tasks = JoinSet::new();
 
-        // Start consumers for each store
+        // Start consumers for each scraper
         for scraper in self.scrapers.iter() {
             let store = scraper.get_store();
-            let queue_port = self.queue_port.clone();
+            let queue = Arc::clone(&self.queue_port);
             let tx = tx.clone();
 
             tasks.spawn(async move {
                 loop {
-                    if let Err(e) = queue_port.consume_messages(&store, tx.clone()).await {
-                        error!("Consumer error for store {}: {}", store, e);
+                    if let Err(e) = queue.consume_messages(&store, tx.clone()).await {
+                        error!("Error consuming messages for {}: {}", store, e);
                         sleep(RECONNECT_DELAY).await;
                     }
                 }
             });
         }
 
-        // Process messages from the channel
+        // Process received messages
         while let Some((query, store)) = rx.recv().await {
-            let scraper = self.scrapers.iter()
-                .find(|s| s.get_store() == store)
-                .cloned();
+            let scrapers = Arc::clone(&self.scrapers);
+            let queue = Arc::clone(&self.queue_port);
+            let event_publisher = Arc::clone(&self.event_publisher);
 
-            if let Some(scraper) = scraper {
-                let cache_port = self.cache_port.clone();
-                let start_time = Instant::now();
+            tokio::spawn(async move {
+                let start = Instant::now();
+                info!("Processing query '{}' for store {}", query, store);
 
-                tasks.spawn(async move {
-                    info!("Processing task for store {} and query: {}", store, query);
-                    
-                    // Scrape products
-                    match scraper.scrape_products(&query, DEFAULT_LIMIT).await {
-                        Ok(products) => {
-                            let scraping_duration = start_time.elapsed();
-                            info!(
-                                "Found {} products for store {} and query: {} in {:?}",
-                                products.len(), store, query, scraping_duration
-                            );
-                            
-                            // Cache the results
-                            let cache_start = Instant::now();
-                            if let Err(e) = cache_port.cache_store_products(&query, &store, &products).await {
-                                error!("Failed to cache store products: {}", e);
-                                return;
-                            }
-                            
-                            // Also cache in the all-products cache
-                            if let Err(e) = cache_port.cache_products(&query, &products).await {
-                                error!("Failed to cache all products: {}", e);
-                                // Don't fail if at least store-specific cache worked
-                            }
-                            
-                            let cache_duration = cache_start.elapsed();
-                            info!(
-                                "Stored results for store: {}, query: {} - Scraping took {:?}, Caching took {:?}",
-                                store, query, scraping_duration, cache_duration
-                            );
+                // Find the appropriate scraper
+                let scraper = scrapers.iter()
+                    .find(|s| s.get_store() == store)
+                    .expect("Scraper not found for store");
+
+                // Scrape products
+                match scraper.scrape_products(&query, DEFAULT_LIMIT).await {
+                    Ok(products) => {
+                        info!(
+                            "Found {} products for query '{}' in store {} (took {:?})",
+                            products.len(),
+                            query,
+                            store,
+                            start.elapsed()
+                        );
+
+                        // Publish ProductsScraped event
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::ProductsScraped {
+                                metadata: EventMetadata::new(),
+                                query: query.clone(),
+                                products: products.clone(),
+                            })
+                            .await
+                        {
+                            error!("Failed to publish ProductsScraped event: {}", e);
                         }
-                        Err(e) => {
-                            error!("Failed to scrape products for store {} after {:?}: {}", 
-                                store, start_time.elapsed(), e);
+
+                        // Publish ScrapeJobCompleted event
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::ScrapeJobCompleted {
+                                metadata: EventMetadata::new(),
+                                query,
+                                products,
+                            })
+                            .await
+                        {
+                            error!("Failed to publish ScrapeJobCompleted event: {}", e);
                         }
                     }
-                });
-            }
+                    Err(e) => {
+                        error!(
+                            "Error scraping products for query '{}' in store {}: {}",
+                            query, store, e
+                        );
+                    }
+                }
+            });
         }
 
         Ok(())

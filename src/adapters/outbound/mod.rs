@@ -2,6 +2,7 @@ pub mod cache;
 pub mod queue;
 pub mod http;
 pub mod scrapers;
+pub mod events;
 pub mod mongodb;
 
 // Re-export configs
