@@ -1,4 +1,4 @@
-use actix_web::{get, post, web, HttpResponse, Responder};
+use actix_web::{web, HttpResponse, Responder};
 use std::time::Duration;
 use tracing::{info, error};
 use uuid::Uuid;
@@ -10,8 +10,8 @@ use crate::domain::{
 };
 use crate::error::{AppError, AppResult};
 
-const TASK_TIMEOUT: Duration = Duration::from_secs(180); // 3 minutes
-const POLL_INTERVAL: Duration = Duration::from_secs(1);
+//const TASK_TIMEOUT: Duration = Duration::from_secs(180); // 3 minutes
+//const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 pub struct ApiRoutes<C, Q>
 where

@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands};
-use tracing::{info, error};
+use tracing::{info};
 
 use crate::domain::{
     models::{Product, DomainError, Store},
