@@ -41,7 +41,7 @@ impl RedisAdapter {
         let mut conn = self.client.clone();
         let key = self.get_store_key(query, store);
         
-        let _: () = conn.del(&key).await
+        let _: Option<()> = conn.del(&key).await
             .map_err(|e| DomainError::cache(format!("Failed to delete key {}: {}", key, e)))?;
         
         Ok(())
@@ -55,7 +55,7 @@ impl RedisAdapter {
             .map_err(|e| DomainError::cache(format!("Failed to get keys for pattern {}: {}", pattern, e)))?;
         
         for key in keys {
-            let _: () = conn.del(&key).await
+            let _: Option<()> = conn.del(&key).await
                 .map_err(|e| DomainError::cache(format!("Failed to delete key {}: {}", key, e)))?;
         }
         Ok(())

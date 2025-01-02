@@ -54,7 +54,7 @@ impl Default for AppConfig {
 
 impl AppConfig {
     /// Validates the configuration
-    pub fn validate(&self) -> Result<(), ConfigError> {
+    pub fn validate(&mut self) -> Result<(), ConfigError> {
         // Validate Redis configuration
         if let Err(err) = self.redis.validate() {
             warn!("Redis configuration validation failed: {}", err);
