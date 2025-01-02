@@ -82,7 +82,7 @@ where
         }
 
         // Fetch and parse product details
-        let html = self.http.get_rendered_html(url).await?;
+        let _html = self.http.get_rendered_html(url).await?;
         
         // TODO: Implement product parsing
         todo!("Implement product parsing")

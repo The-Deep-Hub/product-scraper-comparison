@@ -103,7 +103,7 @@ impl BauhausScraper {
         }
 
         // Extract image URL from JSON-LD script
-        let script_selector = Selector::parse("script[type='application/ld+json']").unwrap();
+        let _script_selector = Selector::parse("script[type='application/ld+json']").unwrap();
         let image_url = card
             .next_siblings()
             .find_map(|sibling| {

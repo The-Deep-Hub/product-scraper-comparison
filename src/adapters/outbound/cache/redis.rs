@@ -41,7 +41,7 @@ impl RedisAdapter {
         let mut conn = self.client.clone();
         let key = self.get_store_key(query, store);
         
-        conn.del(&key).await
+        let _: () = conn.del(&key).await
             .map_err(|e| DomainError::cache(format!("Failed to delete key {}: {}", key, e)))?;
         
         Ok(())
@@ -55,7 +55,7 @@ impl RedisAdapter {
             .map_err(|e| DomainError::cache(format!("Failed to get keys for pattern {}: {}", pattern, e)))?;
         
         for key in keys {
-            conn.del(&key).await
+            let _: () = conn.del(&key).await
                 .map_err(|e| DomainError::cache(format!("Failed to delete key {}: {}", key, e)))?;
         }
         Ok(())
@@ -96,7 +96,7 @@ impl CachePort for RedisAdapter {
         let json = serde_json::to_string(products)
             .map_err(|e| DomainError::cache(format!("Failed to serialize products: {}", e)))?;
         
-        conn.set_ex(&key, json, 300).await // 5 minutes TTL
+        let _: () = conn.set_ex(&key, json, 300).await // 5 minutes TTL
             .map_err(|e| DomainError::cache(format!("Failed to cache products in Redis: {}", e)))?;
 
         // Also cache store-specific results without invalidating existing ones
@@ -114,7 +114,7 @@ impl CachePort for RedisAdapter {
             let json = serde_json::to_string(&store_products)
                 .map_err(|e| DomainError::cache(format!("Failed to serialize store products: {}", e)))?;
             
-            conn.set_ex(&store_key, json, 300).await
+            let _: () = conn.set_ex(&store_key, json, 300).await
                 .map_err(|e| DomainError::cache(format!("Failed to cache store products in Redis: {}", e)))?;
         }
 
@@ -132,7 +132,7 @@ impl CachePort for RedisAdapter {
         let json = serde_json::to_string(products)
             .map_err(|e| DomainError::cache(format!("Failed to serialize products: {}", e)))?;
         
-        conn.set_ex(&key, json, 300).await
+        let _: () = conn.set_ex(&key, json, 300).await
             .map_err(|e| DomainError::cache(format!("Failed to cache store products in Redis: {}", e)))?;
         
         // Update the all-stores cache by merging with existing products
@@ -155,7 +155,7 @@ impl CachePort for RedisAdapter {
         let json = serde_json::to_string(&updated_products)
             .map_err(|e| DomainError::cache(format!("Failed to serialize updated products: {}", e)))?;
         
-        conn.set_ex(&all_key, json, 300).await
+        let _: () = conn.set_ex(&all_key, json, 300).await
             .map_err(|e| DomainError::cache(format!("Failed to cache updated products in Redis: {}", e)))?;
         
         Ok(())

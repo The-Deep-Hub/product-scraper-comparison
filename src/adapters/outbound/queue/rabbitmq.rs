@@ -305,7 +305,7 @@ impl QueuePort for RabbitMQAdapter {
         Ok(())
     }
     
-    async fn process_scrape_job(&self, query: &str) -> Result<(), DomainError> {
+    async fn process_scrape_job(&self, _query: &str) -> Result<(), DomainError> {
         // Process jobs from all store queues
         for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
             let queue_name = Self::get_queue_name(store);
@@ -328,7 +328,7 @@ impl QueuePort for RabbitMQAdapter {
         Ok(())
     }
 
-    async fn process_store_scrape_job(&self, query: &str, store: &Store) -> Result<(), DomainError> {
+    async fn process_store_scrape_job(&self, _query: &str, store: &Store) -> Result<(), DomainError> {
         let queue_name = Self::get_queue_name(store);
         
         if let Some(delivery) = self.channel.basic_get(
