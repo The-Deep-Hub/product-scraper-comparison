@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use validator::Validate;
 
+/// Registration request DTO
 #[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct RegisterRequest {
     #[validate(email)]
@@ -10,6 +11,7 @@ pub struct RegisterRequest {
     pub password_confirmation: String,
 }
 
+/// Login request DTO
 #[derive(Debug, Serialize, Deserialize, Validate)]
 pub struct LoginRequest {
     #[validate(email)]
@@ -17,6 +19,7 @@ pub struct LoginRequest {
     pub password: String,
 }
 
+/// JWT claims
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Claims {
     pub sub: String,
