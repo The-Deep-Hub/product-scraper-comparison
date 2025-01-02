@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
-use crate::domain::models::{Product, DomainResult};
+use crate::domain::models::{Product, Store, DomainResult};
 
 /// Metadata attached to all domain events
 #[derive(Debug, Clone)]
@@ -33,43 +33,120 @@ impl EventMetadata {
 
 #[derive(Debug, Clone)]
 pub enum DomainEvent {
+    // Search Events
+    SearchRequested {
+        metadata: EventMetadata,
+        query: String,
+        stores: Vec<Store>,
+    },
+    SearchCompleted {
+        metadata: EventMetadata,
+        query: String,
+        total_products: usize,
+    },
+
+    // Scraping Events
     ProductsScraped {
         metadata: EventMetadata,
         query: String,
         products: Vec<Product>,
+        store: Store,
     },
+    ScrapingFailed {
+        metadata: EventMetadata,
+        query: String,
+        store: Store,
+        error: String,
+    },
+    RateLimitReached {
+        metadata: EventMetadata,
+        store: Store,
+        retry_after: u64,
+    },
+    ParsingError {
+        metadata: EventMetadata,
+        store: Store,
+        url: String,
+        error: String,
+    },
+
+    // Cache Events
     ProductsCached {
         metadata: EventMetadata,
         query: String,
         products: Vec<Product>,
+        store: Store,
     },
-    ScrapeJobEnqueued {
+    CacheHit {
         metadata: EventMetadata,
         query: String,
+        store: Store,
     },
-    ScrapeJobCompleted {
+    CacheMiss {
         metadata: EventMetadata,
         query: String,
-        products: Vec<Product>,
+        store: Store,
+    },
+
+    // Queue Events
+    JobEnqueued {
+        metadata: EventMetadata,
+        query: String,
+        store: Store,
+    },
+    JobStarted {
+        metadata: EventMetadata,
+        query: String,
+        store: Store,
+    },
+    JobCompleted {
+        metadata: EventMetadata,
+        query: String,
+        store: Store,
+        products_count: usize,
+    },
+    JobFailed {
+        metadata: EventMetadata,
+        query: String,
+        store: Store,
+        error: String,
     },
 }
 
 impl DomainEvent {
     pub fn metadata(&self) -> &EventMetadata {
         match self {
+            Self::SearchRequested { metadata, .. } => metadata,
+            Self::SearchCompleted { metadata, .. } => metadata,
             Self::ProductsScraped { metadata, .. } => metadata,
+            Self::ScrapingFailed { metadata, .. } => metadata,
+            Self::RateLimitReached { metadata, .. } => metadata,
+            Self::ParsingError { metadata, .. } => metadata,
             Self::ProductsCached { metadata, .. } => metadata,
-            Self::ScrapeJobEnqueued { metadata, .. } => metadata,
-            Self::ScrapeJobCompleted { metadata, .. } => metadata,
+            Self::CacheHit { metadata, .. } => metadata,
+            Self::CacheMiss { metadata, .. } => metadata,
+            Self::JobEnqueued { metadata, .. } => metadata,
+            Self::JobStarted { metadata, .. } => metadata,
+            Self::JobCompleted { metadata, .. } => metadata,
+            Self::JobFailed { metadata, .. } => metadata,
         }
     }
 
     pub fn event_type(&self) -> &'static str {
         match self {
+            Self::SearchRequested { .. } => "SearchRequested",
+            Self::SearchCompleted { .. } => "SearchCompleted",
             Self::ProductsScraped { .. } => "ProductsScraped",
+            Self::ScrapingFailed { .. } => "ScrapingFailed",
+            Self::RateLimitReached { .. } => "RateLimitReached",
+            Self::ParsingError { .. } => "ParsingError",
             Self::ProductsCached { .. } => "ProductsCached",
-            Self::ScrapeJobEnqueued { .. } => "ScrapeJobEnqueued",
-            Self::ScrapeJobCompleted { .. } => "ScrapeJobCompleted",
+            Self::CacheHit { .. } => "CacheHit",
+            Self::CacheMiss { .. } => "CacheMiss",
+            Self::JobEnqueued { .. } => "JobEnqueued",
+            Self::JobStarted { .. } => "JobStarted",
+            Self::JobCompleted { .. } => "JobCompleted",
+            Self::JobFailed { .. } => "JobFailed",
         }
     }
 }

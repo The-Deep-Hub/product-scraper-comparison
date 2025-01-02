@@ -5,7 +5,7 @@ use rust_scraper::{
             queue::RabbitMQAdapter,
             http::ZyteAdapter,
             scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
-            events::{InMemoryEventPublisher, handlers::ProductCacheHandler},
+            events::{InMemoryEventPublisher, handlers::{ProductCacheHandler, MetricsHandler}},
         },
         inbound::worker::TaskProcessor,
     },
@@ -56,14 +56,16 @@ async fn main() -> AppResult<()> {
     // Create event publisher
     let event_publisher: Arc<dyn EventPublisherPort> = Arc::new(InMemoryEventPublisher::new());
 
-    // Create cache handler
+    // Create handlers
     let cache_handler = ProductCacheHandler::new(
         Arc::clone(&redis_adapter),
         Arc::clone(&event_publisher)
     );
+    let metrics_handler = MetricsHandler::new();
 
-    // Register cache handler
+    // Register handlers
     event_publisher.register_handler(Box::new(cache_handler)).await?;
+    event_publisher.register_handler(Box::new(metrics_handler)).await?;
 
     // Create task processor with correct arguments
     let processor = TaskProcessor::new(

@@ -55,17 +55,42 @@ impl TaskProcessor {
         // Process received messages
         while let Some((query, store)) = rx.recv().await {
             let scrapers = Arc::clone(&self.scrapers);
-            let queue = Arc::clone(&self.queue_port);
             let event_publisher = Arc::clone(&self.event_publisher);
 
             tokio::spawn(async move {
                 let start = Instant::now();
-                info!("Processing query '{}' for store {}", query, store);
+                
+                // Emit JobStarted event
+                if let Err(e) = event_publisher
+                    .publish(DomainEvent::JobStarted {
+                        metadata: EventMetadata::new(),
+                        query: query.clone(),
+                        store: store.clone(),
+                    })
+                    .await
+                {
+                    error!("Failed to publish JobStarted event: {}", e);
+                }
 
                 // Find the appropriate scraper
-                let scraper = scrapers.iter()
-                    .find(|s| s.get_store() == store)
-                    .expect("Scraper not found for store");
+                let scraper = match scrapers.iter().find(|s| s.get_store() == store) {
+                    Some(s) => s,
+                    None => {
+                        error!("Scraper not found for store {}", store);
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::JobFailed {
+                                metadata: EventMetadata::new(),
+                                query,
+                                store,
+                                error: "Scraper not found for store".to_string(),
+                            })
+                            .await
+                        {
+                            error!("Failed to publish JobFailed event: {}", e);
+                        }
+                        return;
+                    }
+                };
 
                 // Scrape products
                 match scraper.scrape_products(&query, DEFAULT_LIMIT).await {
@@ -78,28 +103,30 @@ impl TaskProcessor {
                             start.elapsed()
                         );
 
-                        // Publish ProductsScraped event
+                        // Emit ProductsScraped event
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::ProductsScraped {
                                 metadata: EventMetadata::new(),
                                 query: query.clone(),
                                 products: products.clone(),
+                                store: store.clone(),
                             })
                             .await
                         {
                             error!("Failed to publish ProductsScraped event: {}", e);
                         }
 
-                        // Publish ScrapeJobCompleted event
+                        // Emit JobCompleted event
                         if let Err(e) = event_publisher
-                            .publish(DomainEvent::ScrapeJobCompleted {
+                            .publish(DomainEvent::JobCompleted {
                                 metadata: EventMetadata::new(),
                                 query,
-                                products,
+                                store,
+                                products_count: products.len(),
                             })
                             .await
                         {
-                            error!("Failed to publish ScrapeJobCompleted event: {}", e);
+                            error!("Failed to publish JobCompleted event: {}", e);
                         }
                     }
                     Err(e) => {
@@ -107,6 +134,19 @@ impl TaskProcessor {
                             "Error scraping products for query '{}' in store {}: {}",
                             query, store, e
                         );
+                        
+                        // Emit JobFailed event
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::JobFailed {
+                                metadata: EventMetadata::new(),
+                                query,
+                                store,
+                                error: e.to_string(),
+                            })
+                            .await
+                        {
+                            error!("Failed to publish JobFailed event: {}", e);
+                        }
                     }
                 }
             });

@@ -27,11 +27,12 @@ impl ProductCacheHandler {
 impl EventHandler for ProductCacheHandler {
     async fn handle(&self, event: DomainEvent) -> DomainResult<()> {
         match event {
-            DomainEvent::ProductsScraped { query, products, metadata } => {
+            DomainEvent::ProductsScraped { query, products, store, metadata } => {
                 info!(
-                    "Caching {} products for query '{}' (event_id: {})",
+                    "Caching {} products for query '{}' in store {} (event_id: {})",
                     products.len(),
                     query,
+                    store,
                     metadata.id
                 );
 
@@ -44,6 +45,7 @@ impl EventHandler for ProductCacheHandler {
                         metadata: EventMetadata::new(),
                         query,
                         products,
+                        store,
                     })
                     .await?;
 
