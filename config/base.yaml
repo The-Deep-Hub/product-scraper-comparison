@@ -1,0 +1,61 @@
+environment: development
+
+server:
+  host: "0.0.0.0"  # Listen on all interfaces
+  port: 8080
+
+mongodb:
+  uri: ""
+  database: "rust_scraper"
+  min_pool_size: 5
+  max_pool_size: 10
+
+redis:
+  host: "localhost"
+  port: 6379
+  user: "default"
+  password: ""
+
+rabbitmq:
+  amqp_addr: ""
+  prefetch_count: 1
+
+zyte:
+  api_key: ""
+  endpoint: "https://api.zyte.com/v1/extract"
+  concurrent_requests: 5
+  request_timeout: 30
+
+worker:
+  prefetch_count: 3
+  reconnect_delay_secs: 5
+  product_limit: 100
+  store_queues:
+    leroy: "leroy_tasks"
+    bauhaus: "bauhaus_tasks"
+    bricodepot: "bricodepot_tasks"
+
+stores:
+  leroy:
+    name: "Leroy Merlin"
+    base_url: "https://www.leroymerlin.es"
+    search_endpoint: "/search"
+    api:
+      api_type: "zyte"
+      api_key: ""
+  
+  bricodepot:
+    name: "Bricodepot"
+    base_url: "https://www.bricodepot.es"
+    search_endpoint: "/productos/buscar"
+    api:
+      api_type: "zyte"
+      api_key: ""
+
+  bauhaus:
+    name: "Bauhaus"
+    base_url: "https://www.bauhaus.es"
+    search_endpoint: "/search"
+    api:
+      api_type: "zyte"
+      api_key: ""

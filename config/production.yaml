@@ -1,0 +1,30 @@
+environment: production
+
+server:
+  host: "0.0.0.0"  # Allow external connections in production
+  port: 8080
+
+mongodb:
+  uri: ""  # Set via environment variable
+  database: "rust_scraper"
+  min_pool_size: 10
+  max_pool_size: 20
+
+redis:
+  host: ""   # Set via environment variable
+  port: 6379
+  user: ""   # Set via environment variable
+  password: ""  # Set via environment variable
+
+rabbitmq:
+  amqp_addr: ""  # Set via environment variable
+  prefetch_count: 10  # Higher prefetch count for production
+
+worker:
+  prefetch_count: 10
+  reconnect_delay_secs: 5
+  product_limit: 200
+  store_queues:
+    leroy: "leroy_tasks"
+    bauhaus: "bauhaus_tasks"
+    bricodepot: "bricodepot_tasks"

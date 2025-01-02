@@ -6,6 +6,7 @@ use lapin::Error as LapinError;
 use serde_json::Error as JsonError;
 use reqwest::Error as ReqwestError;
 use std::error::Error as StdError;
+use serde::Serialize;
 
 #[derive(Debug, Display)]
 pub enum AppError {
@@ -25,19 +26,30 @@ pub enum AppError {
     ScraperError(String),
 }
 
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+    message: String,
+}
+
 impl StdError for AppError {}
 
 impl ResponseError for AppError {
     fn error_response(&self) -> HttpResponse {
-        match self {
-            AppError::InternalServerError(msg) => HttpResponse::InternalServerError().json(msg),
-            AppError::NotFound(msg) => HttpResponse::NotFound().json(msg),
-            AppError::BadRequest(msg) => HttpResponse::BadRequest().json(msg),
-            AppError::Unauthorized(msg) => HttpResponse::Unauthorized().json(msg),
-            AppError::CacheError(msg) => HttpResponse::InternalServerError().json(msg),
-            AppError::QueueError(msg) => HttpResponse::InternalServerError().json(msg),
-            AppError::ScraperError(msg) => HttpResponse::InternalServerError().json(msg),
-        }
+        let (status, error_type) = match self {
+            AppError::InternalServerError(_) => (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, "internal_server_error"),
+            AppError::NotFound(_) => (actix_web::http::StatusCode::NOT_FOUND, "not_found"),
+            AppError::BadRequest(_) => (actix_web::http::StatusCode::BAD_REQUEST, "bad_request"),
+            AppError::Unauthorized(_) => (actix_web::http::StatusCode::UNAUTHORIZED, "unauthorized"),
+            AppError::CacheError(_) => (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, "cache_error"),
+            AppError::QueueError(_) => (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, "queue_error"),
+            AppError::ScraperError(_) => (actix_web::http::StatusCode::INTERNAL_SERVER_ERROR, "scraper_error"),
+        };
+
+        HttpResponse::build(status).json(ErrorResponse {
+            error: error_type.to_string(),
+            message: self.to_string(),
+        })
     }
 }
 
