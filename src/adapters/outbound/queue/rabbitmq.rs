@@ -32,6 +32,9 @@ pub struct Task {
 
 #[derive(Clone)]
 pub struct RabbitMQAdapter {
+    // We need to keep the connection alive as long as we have active channels.
+    // While we don't directly use it, dropping it would invalidate all channels.
+    #[allow(dead_code)]
     connection: Arc<Connection>,
     channel: Arc<Channel>,
     redis: ConnectionManager,
@@ -203,71 +206,6 @@ impl RabbitMQAdapter {
         }
         
         Ok(())
-    }
-
-    async fn create_and_store_task(&self, query: &str, store: Option<&Store>) -> Result<(), DomainError> {
-        let task_id = Uuid::new_v4().to_string();
-        let task = Task {
-            id: task_id.clone(),
-            query: query.to_string(),
-            store: store.cloned(),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-        
-        // Store task in Redis with expiration
-        let mut conn = self.redis.clone();
-        let task_key = Self::get_task_key(&task_id);
-        let task_json = serde_json::to_string(&task)
-            .map_err(|e| DomainError::queue(format!("Failed to serialize task: {}", e)))?;
-        
-        let _: () = conn.set_ex(&task_key, task_json, TASK_EXPIRY as usize).await
-            .map_err(|e| DomainError::queue(format!("Failed to store task in Redis: {}", e)))?;
-        
-        match store {
-            Some(store) => {
-                // Ensure queue exists and publish to store-specific queue
-                self.ensure_queue_exists(store).await?;
-                let queue_name = Self::get_queue_name(store);
-                
-                info!("Publishing task to queue {}: {}", queue_name, query);
-                
-                self.channel.basic_publish(
-                    "",
-                    &queue_name,
-                    BasicPublishOptions::default(),
-                    query.as_bytes(),
-                    BasicProperties::default()
-                        .with_expiration(MESSAGE_TTL.to_string().into()),
-                ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
-            },
-            None => {
-                // For all-stores case, publish to each store's queue
-                for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
-                    self.ensure_queue_exists(store).await?;
-                    let queue_name = Self::get_queue_name(store);
-                    
-                    info!("Publishing task to queue {}: {}", queue_name, query);
-                    
-                    self.channel.basic_publish(
-                        "",
-                        &queue_name,
-                        BasicPublishOptions::default(),
-                        query.as_bytes(),
-                        BasicProperties::default()
-                            .with_expiration(MESSAGE_TTL.to_string().into()),
-                    ).await.map_err(|e| DomainError::queue(format!("Failed to publish task: {}", e)))?;
-                }
-            }
-        }
-        
-        Ok(())
-    }
-
-    async fn get_value(&self, key: &str) -> DomainResult<Option<String>> {
-        let mut conn = self.redis.clone();
-        conn.get(key).await
-            .map_err(|e| DomainError::queue(format!("Failed to get value from Redis: {}", e)))
     }
 
     async fn publish_task(&self, query: &str, store: Option<&Store>) -> DomainResult<()> {
