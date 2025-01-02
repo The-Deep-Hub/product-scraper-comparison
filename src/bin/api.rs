@@ -1,6 +1,6 @@
 use actix_cors::Cors;
 use actix_web::{App, HttpServer};
-use tracing::{info, warn, error};
+use tracing::{info};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use rust_scraper::{
@@ -52,7 +52,7 @@ async fn main() -> std::io::Result<()> {
     .expect("Failed to create RabbitMQ adapter");
     info!("RabbitMQ adapter initialized");
 
-    let zyte_adapter = ZyteAdapter::new(
+    let _zyte_adapter = ZyteAdapter::new(
         config.http_client.api_key.clone()
             .expect("Zyte API key must be configured")
     );
@@ -60,7 +60,7 @@ async fn main() -> std::io::Result<()> {
 
     // Configure CORS
     info!("Configuring CORS...");
-    let cors = Cors::default()
+    let _cors = Cors::default()
         .allow_any_origin()
         .allow_any_method()
         .allow_any_header();

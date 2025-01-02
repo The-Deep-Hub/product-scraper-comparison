@@ -4,7 +4,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION}};
 use serde_json::{json, Value};
 use tokio::time::sleep;
-use tracing::{info, error};
+use tracing::{error};
 
 use crate::domain::models::DomainError;
 use crate::domain::ports::outbound::HttpClientPort;
@@ -12,7 +12,6 @@ use crate::domain::ports::outbound::HttpClientPort;
 #[derive(Clone)]
 pub struct ZyteAdapter {
     client: Arc<Client>,
-    api_key: String,
     base_url: String,
 }
 
@@ -37,7 +36,6 @@ impl ZyteAdapter {
 
         Self {
             client: Arc::new(client),
-            api_key,
             base_url: "https://api.zyte.com/v1/extract".to_string(),
         }
     }

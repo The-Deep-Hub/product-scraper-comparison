@@ -10,18 +10,18 @@ use crate::domain::{
 };
 
 #[derive(Debug, Default, Clone)]
-struct Metrics {
-    searches_requested: u64,
-    searches_completed: u64,
-    products_scraped: HashMap<Store, u64>,
-    scraping_failures: HashMap<Store, u64>,
-    rate_limits_hit: HashMap<Store, u64>,
-    parsing_errors: HashMap<Store, u64>,
-    cache_hits: HashMap<Store, u64>,
-    cache_misses: HashMap<Store, u64>,
-    jobs_enqueued: HashMap<Store, u64>,
-    jobs_completed: HashMap<Store, u64>,
-    jobs_failed: HashMap<Store, u64>,
+pub struct Metrics {
+    pub searches_requested: u64,
+    pub searches_completed: u64,
+    pub products_scraped: HashMap<Store, u64>,
+    pub scraping_failures: HashMap<Store, u64>,
+    pub rate_limits_hit: HashMap<Store, u64>,
+    pub parsing_errors: HashMap<Store, u64>,
+    pub cache_hits: HashMap<Store, u64>,
+    pub cache_misses: HashMap<Store, u64>,
+    pub jobs_enqueued: HashMap<Store, u64>,
+    pub jobs_completed: HashMap<Store, u64>,
+    pub jobs_failed: HashMap<Store, u64>,
 }
 
 pub struct MetricsHandler {

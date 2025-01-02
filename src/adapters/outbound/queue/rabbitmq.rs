@@ -5,7 +5,7 @@ use futures::StreamExt;
 use futures_util::TryStreamExt;
 use lapin::{
     options::*, types::{FieldTable, AMQPValue}, BasicProperties,
-    Connection, ConnectionProperties, Channel, Consumer,
+    Connection, ConnectionProperties, Channel,
 };
 use serde::{Serialize, Deserialize};
 use tokio::sync::mpsc;
