@@ -7,6 +7,7 @@ use crate::domain::{
     ports::outbound::CachePort,
 };
 
+#[derive(Clone)]
 pub struct RedisAdapter {
     client: ConnectionManager,
 }

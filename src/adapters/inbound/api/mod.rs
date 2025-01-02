@@ -1,5 +1,5 @@
-mod routes;
-mod models;
+pub mod models;
+pub mod routes;
 mod middleware;
 mod response;
 

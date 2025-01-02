@@ -1,3 +1,2 @@
-mod rabbitmq;
-
-pub use rabbitmq::{RabbitMQAdapter, Task}; 
+pub mod rabbitmq;
+pub use rabbitmq::RabbitMQAdapter; 

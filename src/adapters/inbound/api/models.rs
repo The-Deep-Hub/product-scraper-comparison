@@ -6,7 +6,7 @@ use crate::domain::models::{Product, Store};
 #[derive(Debug, Deserialize)]
 pub struct SearchRequest {
     pub query: String,
-    pub store: Option<Store>,
+    pub stores: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -20,5 +20,6 @@ pub struct SearchResponse {
 pub struct TaskStatusResponse {
     pub status: String,
     pub stores: Option<HashMap<String, Vec<Product>>>,
+    pub pending_stores: Option<Vec<String>>,
     pub error: Option<String>,
 } 
