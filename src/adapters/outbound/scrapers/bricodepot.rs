@@ -19,8 +19,6 @@ struct Selectors {
 }
 
 pub struct BricodepotScraper {
-    store_name: String,
-    base_url: String,
     search_url: String,
     client: Box<dyn HttpClientPort>,
     selectors: Selectors,
@@ -40,8 +38,6 @@ impl BricodepotScraper {
         };
 
         Self {
-            store_name: "bricodepot".to_string(),
-            base_url: "https://www.bricodepot.es".to_string(),
             search_url: "https://www.bricodepot.es/catalogsearch/result/?q=".to_string(),
             client,
             selectors,

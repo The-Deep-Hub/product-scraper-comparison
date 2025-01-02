@@ -8,7 +8,6 @@ use crate::domain::models::{Product, Store, DomainResult, DomainError};
 use crate::domain::ports::outbound::{ScraperPort, HttpClientPort};
 
 pub struct BauhausScraper {
-    store_name: String,
     base_url: String,
     search_url: String,
     client: Box<dyn HttpClientPort>,
@@ -22,8 +21,6 @@ struct Selectors {
     price_wrapper: Selector,
     price: Selector,
     original_price: Selector,
-    description: Selector,
-    image: Selector,
     url: Selector,
 }
 
@@ -35,13 +32,10 @@ impl BauhausScraper {
             price_wrapper: Selector::parse("div.product-list-tile__price-wrapper").unwrap(),
             price: Selector::parse("span.price-tag__integer-digits").unwrap(),
             original_price: Selector::parse("div.price-tag__strikethrough").unwrap(),
-            description: Selector::parse("div.product-list-tile__info__attributes").unwrap(),
-            image: Selector::parse("img.product-list-tile__image").unwrap(),
             url: Selector::parse("a[href]").unwrap(),
         };
 
         Self {
-            store_name: "bauhaus".to_string(),
             base_url: "https://www.bauhaus.es".to_string(),
             search_url: "https://www.bauhaus.es/buscar/productos".to_string(),
             client,
