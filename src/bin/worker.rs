@@ -95,13 +95,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize event publisher and handlers
     info!("Setting up event system...");
-    let event_publisher = Arc::new(InMemoryEventPublisher::new());
-    let cache_handler = Box::new(ProductCacheHandler::new(
+    let event_publisher: Arc<dyn EventPublisherPort> = Arc::new(InMemoryEventPublisher::new());
+    let cache_handler = ProductCacheHandler::new(
         cache_adapter.clone(),
         event_publisher.clone(),
-    ));
+    );
 
-    event_publisher.register_handler(cache_handler).await?;
+    event_publisher.register_handler(Box::new(cache_handler)).await?;
     info!("Event system initialized");
 
     // Initialize scraper service
@@ -137,7 +137,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Ok(products) => {
                         info!("Successfully scraped {} products for store {} with query: {}", products.len(), store, query);
                         
-                        // Emit ProductsScraped event (caching will be handled by the ProductCacheHandler)
+                        // Cache the products for this store
+                        if let Err(e) = cache_adapter.cache_store_products(&query, &store, &products).await {
+                            error!("Failed to cache products for store {}: {}", store, e);
+                        } else {
+                            info!("Successfully cached {} products for store {} with query: {}", products.len(), store, query);
+                        }
+
+                        // Emit ProductsScraped event
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::ProductsScraped {
                                 metadata: EventMetadata::new(),
@@ -148,9 +155,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             .await
                         {
                             error!("Failed to publish ProductsScraped event: {}", e);
-                        } else {
-                            info!("Successfully published ProductsScraped event for store {} with query: {}", store, query);
                         }
+
+                        info!("Successfully processed task for store {} with query: {}", store, query);
                     },
                     Err(e) => {
                         error!("Failed to process task: {}", e);

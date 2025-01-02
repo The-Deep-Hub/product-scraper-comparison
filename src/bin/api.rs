@@ -1,26 +1,19 @@
-use std::sync::Arc;
 use actix_cors::Cors;
-use actix_web::{web, App, HttpServer};
-use tracing::{info, warn};
+use actix_web::{App, HttpServer};
+use tracing::{info, warn, error};
 use tracing_subscriber::{fmt, EnvFilter};
 
 use rust_scraper::{
     adapters::{
+        inbound::api::routes::ApiRoutes,
         outbound::{
             cache::RedisAdapter,
             queue::RabbitMQAdapter,
-            events::{
-                InMemoryEventPublisher,
-                handlers::ProductCacheHandler,
-            },
+            http::ZyteAdapter,
         },
-        inbound::api::routes::ApiRoutes,
-    },
-    domain::{
-        ports::outbound::{CachePort, QueuePort, EventPublisherPort},
-        config::QueueConfig,
     },
     config::builder,
+    domain::config::QueueConfig,
 };
 
 #[actix_web::main]
@@ -29,7 +22,7 @@ async fn main() -> std::io::Result<()> {
     fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| EnvFilter::new("rust_scraper=debug,api=debug"))
+                .unwrap_or_else(|_| EnvFilter::new("rust_scraper=debug,api=debug,actix_web=info"))
         )
         .with_target(true)
         .with_thread_ids(true)
@@ -46,53 +39,57 @@ async fn main() -> std::io::Result<()> {
 
     // Initialize adapters
     info!("Initializing adapters...");
-    let cache_adapter = Arc::new(
-        RedisAdapter::new(Box::new(config.cache.clone()))
-            .await
-            .expect("Failed to create Redis adapter")
-    );
+    let cache_adapter = RedisAdapter::new(Box::new(config.cache.clone()))
+        .await
+        .expect("Failed to create Redis adapter");
     info!("Redis adapter initialized");
 
-    let queue_adapter = Arc::new(
-        RabbitMQAdapter::new(
-            config.queue.connection_url(),
-            config.queue.queue_name(),
-        )
-        .await
-        .expect("Failed to create RabbitMQ adapter")
-    );
+    let queue_adapter = RabbitMQAdapter::new(
+        config.queue.connection_url(),
+        config.queue.queue_name(),
+    )
+    .await
+    .expect("Failed to create RabbitMQ adapter");
     info!("RabbitMQ adapter initialized");
 
-    // Initialize event publisher and handlers
-    info!("Setting up event system...");
-    let event_publisher = Arc::new(InMemoryEventPublisher::new());
-    let cache_handler = Box::new(ProductCacheHandler::new(
-        cache_adapter.clone(),
-        event_publisher.clone(),
-    ));
+    let zyte_adapter = ZyteAdapter::new(
+        config.http_client.api_key.clone()
+            .expect("Zyte API key must be configured")
+    );
+    info!("Zyte adapter initialized");
 
-    event_publisher.register_handler(cache_handler).await
-        .expect("Failed to register cache handler");
-    info!("Event system initialized");
+    // Configure CORS
+    info!("Configuring CORS...");
+    let cors = Cors::default()
+        .allow_any_origin()
+        .allow_any_method()
+        .allow_any_header();
+    info!("CORS configured");
 
-    // Create server
-    info!("Starting HTTP server on {}:{}", config.server.host, config.server.port);
+    // Start HTTP server
+    let addr = config.server_addr();
+    info!("Starting HTTP server at {}", addr);
+    
     HttpServer::new(move || {
-        // Create CORS middleware inside the closure
+        // Clone adapters for each worker
+        let cache = cache_adapter.clone();
+        let queue = queue_adapter.clone();
+
+        // Create CORS middleware for each worker
         let cors = Cors::default()
             .allow_any_origin()
             .allow_any_method()
-            .allow_any_header()
-            .max_age(3600);
+            .allow_any_header();
 
+        info!("Configuring new worker instance");
         App::new()
             .wrap(cors)
-            .configure(ApiRoutes::configure(
-                cache_adapter.clone() as Arc<dyn CachePort>,
-                queue_adapter.clone() as Arc<dyn QueuePort>,
-            ))
+            .configure(ApiRoutes::configure(cache, queue))
     })
-    .bind((config.server.host.clone(), config.server.port))?
+    .bind(addr)?
     .run()
-    .await
+    .await?;
+
+    info!("API service shutting down");
+    Ok(())
 }
