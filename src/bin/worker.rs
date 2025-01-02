@@ -1,3 +1,8 @@
+use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::{info, warn, error};
+use tracing_subscriber::{fmt, EnvFilter};
+
 use rust_scraper::{
     adapters::{
         outbound::{
@@ -5,44 +10,78 @@ use rust_scraper::{
             queue::RabbitMQAdapter,
             http::ZyteAdapter,
             scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
-            events::{InMemoryEventPublisher, handlers::{ProductCacheHandler, MetricsHandler}},
+            events::{
+                InMemoryEventPublisher,
+                handlers::ProductCacheHandler,
+            },
         },
-        inbound::worker::TaskProcessor,
     },
     domain::{
-        ports::outbound::{ScraperPort, CachePort, EventPublisherPort},
+        services::scraper::ScraperService,
+        ports::outbound::{ScraperPort, EventPublisherPort, QueuePort, CachePort},
+        config::QueueConfig,
+        models::Store,
+        events::{DomainEvent, EventMetadata},
     },
     config::builder,
-    error::{AppResult, AppError},
 };
-use tracing::info;
-use std::sync::Arc;
 
 #[tokio::main]
-async fn main() -> AppResult<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("rust_scraper=debug,worker=debug")
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Initialize tracing with better configuration
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("rust_scraper=debug,worker=debug"))
+        )
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_line_number(true)
+        .with_file(true)
+        .with_level(true)
         .init();
+
+    info!("Starting worker service...");
 
     // Load configuration
     let config = builder::new().expect("Failed to load configuration");
+    info!("Configuration loaded successfully");
 
     // Initialize adapters
-    let redis_adapter: Arc<dyn CachePort> = Arc::new(RedisAdapter::new().await.expect("Failed to create Redis adapter"));
-    let rabbitmq_adapter = Arc::new(RabbitMQAdapter::new(
-        config.amqp_url(),
-        config.redis_url(),
-    ).await.expect("Failed to create RabbitMQ adapter"));
-    let zyte_adapter = Arc::new(ZyteAdapter::new(config.zyte.api_key.clone()));
+    info!("Initializing adapters...");
+    let cache_adapter = Arc::new(
+        RedisAdapter::new(Box::new(config.cache.clone()))
+            .await
+            .expect("Failed to create Redis adapter")
+    );
+    info!("Redis adapter initialized");
+
+    let queue_adapter = Arc::new(
+        RabbitMQAdapter::new(
+            config.queue.connection_url(),
+            config.queue.queue_name(),
+        )
+        .await
+        .expect("Failed to create RabbitMQ adapter")
+    );
+    info!("RabbitMQ adapter initialized");
+
+    let zyte_adapter = Arc::new(ZyteAdapter::new(
+        config.http_client.api_key.clone()
+            .expect("Zyte API key must be configured")
+    ));
+    info!("Zyte adapter initialized");
 
     // Initialize scrapers
+    info!("Initializing scrapers...");
     let leroy_scraper = Arc::new(LeroyScraper::new(
         Box::new((*zyte_adapter).clone())
     ).expect("Failed to create Leroy scraper"));
+
     let bauhaus_scraper = Arc::new(BauhausScraper::new(
         Box::new((*zyte_adapter).clone())
     ));
+
     let bricodepot_scraper = Arc::new(BricodepotScraper::new(
         Box::new((*zyte_adapter).clone())
     ));
@@ -52,30 +91,92 @@ async fn main() -> AppResult<()> {
         bauhaus_scraper as Arc<dyn ScraperPort>,
         bricodepot_scraper as Arc<dyn ScraperPort>,
     ];
+    info!("Scrapers initialized successfully");
 
-    // Create event publisher
-    let event_publisher: Arc<dyn EventPublisherPort> = Arc::new(InMemoryEventPublisher::new());
+    // Initialize event publisher and handlers
+    info!("Setting up event system...");
+    let event_publisher = Arc::new(InMemoryEventPublisher::new());
+    let cache_handler = Box::new(ProductCacheHandler::new(
+        cache_adapter.clone(),
+        event_publisher.clone(),
+    ));
 
-    // Create handlers
-    let cache_handler = ProductCacheHandler::new(
-        Arc::clone(&redis_adapter),
-        Arc::clone(&event_publisher)
-    );
-    let metrics_handler = MetricsHandler::new();
+    event_publisher.register_handler(cache_handler).await?;
+    info!("Event system initialized");
 
-    // Register handlers
-    event_publisher.register_handler(Box::new(cache_handler)).await?;
-    event_publisher.register_handler(Box::new(metrics_handler)).await?;
+    // Initialize scraper service
+    let scraper_service = Arc::new(ScraperService::new(scrapers));
+    info!("Scraper service initialized");
 
-    // Create task processor with correct arguments
-    let processor = TaskProcessor::new(
-        rabbitmq_adapter,            // queue_port
-        Arc::new(scrapers),          // scrapers
-        event_publisher,             // event_publisher
-    );
+    // Create channel for worker communication
+    let (tx, mut rx) = mpsc::channel::<(String, Store)>(100);
+    info!("Communication channel created");
 
-    info!("Starting worker for store-specific queues");
-    processor.run().await.map_err(AppError::from)?;
+    // Start consumers for each store
+    info!("Starting store-specific consumers...");
+    for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+        let store_queue = queue_adapter.clone();
+        let store_tx = tx.clone();
+        let store_clone = store.clone();
+        
+        info!("Starting consumer for store: {}", store);
+        tokio::spawn(async move {
+            if let Err(e) = store_queue.consume_messages(&store_clone, store_tx).await {
+                error!("Error in consumer for store {}: {}", store_clone, e);
+            }
+        });
+    }
 
+    // Start worker
+    info!("Worker ready to process tasks");
+    loop {
+        tokio::select! {
+            Some((query, store)) = rx.recv() => {
+                info!("Received task - Store: {}, Query: {}", store, query);
+                match scraper_service.scrape_store_products(store, &query, None).await {
+                    Ok(products) => {
+                        info!("Successfully scraped {} products for store {} with query: {}", products.len(), store, query);
+                        
+                        // Emit ProductsScraped event (caching will be handled by the ProductCacheHandler)
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::ProductsScraped {
+                                metadata: EventMetadata::new(),
+                                query: query.clone(),
+                                products,
+                                store: store.clone(),
+                            })
+                            .await
+                        {
+                            error!("Failed to publish ProductsScraped event: {}", e);
+                        } else {
+                            info!("Successfully published ProductsScraped event for store {} with query: {}", store, query);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Failed to process task: {}", e);
+                        
+                        // Emit ScrapingFailed event
+                        if let Err(e) = event_publisher
+                            .publish(DomainEvent::ScrapingFailed {
+                                metadata: EventMetadata::new(),
+                                query,
+                                store,
+                                error: e.to_string(),
+                            })
+                            .await
+                        {
+                            error!("Failed to publish ScrapingFailed event: {}", e);
+                        }
+                    }
+                }
+            }
+            else => {
+                warn!("Channel closed, shutting down worker");
+                break;
+            }
+        }
+    }
+
+    info!("Worker service shutting down");
     Ok(())
 } 

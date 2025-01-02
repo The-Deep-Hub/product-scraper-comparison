@@ -1,70 +1,84 @@
-use actix_web::{App, HttpServer};
-use actix_cors::Cors;
-use tracing::info;
 use std::sync::Arc;
+use actix_cors::Cors;
+use actix_web::{web, App, HttpServer};
+use tracing::{info, warn};
+use tracing_subscriber::{fmt, EnvFilter};
 
 use rust_scraper::{
     adapters::{
         outbound::{
             cache::RedisAdapter,
             queue::RabbitMQAdapter,
-            http::ZyteAdapter,
-            scrapers::{LeroyScraper, BauhausScraper, BricodepotScraper},
+            events::{
+                InMemoryEventPublisher,
+                handlers::ProductCacheHandler,
+            },
         },
         inbound::api::routes::ApiRoutes,
     },
     domain::{
-        services::scraper::ScraperService,
-        ports::outbound::ScraperPort,
+        ports::outbound::{CachePort, QueuePort, EventPublisherPort},
+        config::QueueConfig,
     },
     config::builder,
 };
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    // Initialize logging
-    tracing_subscriber::fmt()
-        .with_env_filter("rust_scraper=debug,api=debug")
+    // Initialize tracing with better configuration
+    fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("rust_scraper=debug,api=debug"))
+        )
+        .with_target(true)
+        .with_thread_ids(true)
+        .with_line_number(true)
+        .with_file(true)
+        .with_level(true)
         .init();
+
+    info!("Starting API service...");
 
     // Load configuration
     let config = builder::new().expect("Failed to load configuration");
+    info!("Configuration loaded successfully");
 
     // Initialize adapters
-    let redis_adapter = RedisAdapter::new().await.expect("Failed to create Redis adapter");
-    let rabbitmq_adapter = RabbitMQAdapter::new(
-        config.amqp_url(),
-        config.redis_url(),
-    ).await.expect("Failed to create RabbitMQ adapter");
-    let zyte_adapter = Arc::new(ZyteAdapter::new(config.zyte.api_key.clone()));
+    info!("Initializing adapters...");
+    let cache_adapter = Arc::new(
+        RedisAdapter::new(Box::new(config.cache.clone()))
+            .await
+            .expect("Failed to create Redis adapter")
+    );
+    info!("Redis adapter initialized");
 
-    // Initialize scrapers
-    let leroy_scraper = Arc::new(LeroyScraper::new(
-        Box::new((*zyte_adapter).clone())
-    ).expect("Failed to create Leroy scraper"));
-    let bauhaus_scraper = Arc::new(BauhausScraper::new(
-        Box::new((*zyte_adapter).clone())
+    let queue_adapter = Arc::new(
+        RabbitMQAdapter::new(
+            config.queue.connection_url(),
+            config.queue.queue_name(),
+        )
+        .await
+        .expect("Failed to create RabbitMQ adapter")
+    );
+    info!("RabbitMQ adapter initialized");
+
+    // Initialize event publisher and handlers
+    info!("Setting up event system...");
+    let event_publisher = Arc::new(InMemoryEventPublisher::new());
+    let cache_handler = Box::new(ProductCacheHandler::new(
+        cache_adapter.clone(),
+        event_publisher.clone(),
     ));
-    let bricodepot_scraper = Arc::new(BricodepotScraper::new(
-        Box::new((*zyte_adapter).clone())
-    ));
 
-    let scrapers = vec![
-        leroy_scraper as Arc<dyn ScraperPort>,
-        bauhaus_scraper as Arc<dyn ScraperPort>,
-        bricodepot_scraper as Arc<dyn ScraperPort>,
-    ];
+    event_publisher.register_handler(cache_handler).await
+        .expect("Failed to register cache handler");
+    info!("Event system initialized");
 
-    // Initialize scraper service
-    let _scraper_service = Arc::new(ScraperService::new(scrapers));
-    
-    info!("Starting HTTP server at {}", config.server_addr());
-
-    let redis = redis_adapter.clone();
-    let rabbitmq = rabbitmq_adapter.clone();
-
+    // Create server
+    info!("Starting HTTP server on {}:{}", config.server.host, config.server.port);
     HttpServer::new(move || {
-        // Create new CORS middleware for each worker
+        // Create CORS middleware inside the closure
         let cors = Cors::default()
             .allow_any_origin()
             .allow_any_method()
@@ -74,11 +88,11 @@ async fn main() -> std::io::Result<()> {
         App::new()
             .wrap(cors)
             .configure(ApiRoutes::configure(
-                redis.clone(),
-                rabbitmq.clone(),
+                cache_adapter.clone() as Arc<dyn CachePort>,
+                queue_adapter.clone() as Arc<dyn QueuePort>,
             ))
     })
-    .bind(config.server_addr())?
+    .bind((config.server.host.clone(), config.server.port))?
     .run()
     .await
 }

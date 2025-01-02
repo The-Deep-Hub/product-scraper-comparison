@@ -1,52 +1,34 @@
 use serde::Deserialize;
+use std::time::Duration;
+use crate::domain::config::CacheConfig;
 
-/// Redis adapter configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct RedisConfig {
-    #[serde(default = "default_host")]
     pub host: String,
-    #[serde(default = "default_port")]
     pub port: u16,
-    #[serde(default = "default_user")]
     pub user: String,
-    #[serde(default)]
     pub password: String,
-}
-
-fn default_host() -> String {
-    "localhost".to_string()
-}
-
-fn default_port() -> u16 {
-    6379
-}
-
-fn default_user() -> String {
-    "default".to_string()
+    pub default_ttl_secs: Option<u64>,
+    pub connection_timeout_ms: Option<u64>,
+    pub max_connections: Option<u32>,
 }
 
 impl Default for RedisConfig {
     fn default() -> Self {
         Self {
-            host: default_host(),
-            port: default_port(),
-            user: default_user(),
-            password: String::new(),
+            host: "localhost".to_string(),
+            port: 6379,
+            user: "default".to_string(),
+            password: "password".to_string(),
+            default_ttl_secs: Some(3600),
+            connection_timeout_ms: Some(5000),
+            max_connections: Some(10),
         }
     }
 }
 
-impl RedisConfig {
-    /// Validates the configuration
-    pub fn validate(&self) -> Result<(), String> {
-        if self.password.is_empty() {
-            return Err("Redis password is not configured".to_string());
-        }
-        Ok(())
-    }
-
-    /// Builds the Redis URL
-    pub fn get_url(&self) -> String {
+impl CacheConfig for RedisConfig {
+    fn connection_url(&self) -> String {
         format!(
             "redis://{}:{}@{}:{}/",
             self.user,
@@ -54,5 +36,17 @@ impl RedisConfig {
             self.host,
             self.port,
         )
+    }
+    
+    fn default_ttl(&self) -> Duration {
+        Duration::from_secs(self.default_ttl_secs.unwrap_or(3600))
+    }
+    
+    fn connection_timeout(&self) -> Duration {
+        Duration::from_millis(self.connection_timeout_ms.unwrap_or(5000))
+    }
+    
+    fn max_connections(&self) -> u32 {
+        self.max_connections.unwrap_or(10)
     }
 } 

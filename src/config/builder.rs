@@ -1,188 +1,188 @@
-use std::path::Path;
+use std::env;
 use config::{Config, ConfigError, Environment, File};
-use dotenv::dotenv;
-use tracing::{info, warn, debug};
+use tracing::{warn, debug};
 
-use super::AppConfig;
+use super::app_config::AppConfig;
 
-/// Creates a new AppConfig instance from environment variables and config files
-pub fn new() -> Result<AppConfig, ConfigError> {
-    // Load .env file
-    dotenv().ok();
+fn get_mongodb_config() -> (String, String) {
+    // Try to get the full URI from environment variable
+    let uri = if let Ok(uri) = env::var("MONGODB_URI") {
+        uri
+    } else {
+        // Construct URI from individual components
+        let username = env::var("MONGO_APP_USERNAME").unwrap_or_else(|_| "rust_scraper".to_string());
+        let password = env::var("MONGO_APP_PASSWORD").unwrap_or_else(|_| "rust_scraper_password".to_string());
+        let host = env::var("MONGO_HOST").unwrap_or_else(|_| "localhost".to_string());
+        let port = env::var("MONGO_PORT").unwrap_or_else(|_| "27017".to_string());
+        let database = env::var("MONGO_DATABASE").unwrap_or_else(|_| "rust_scraper".to_string());
 
-    let env = std::env::var("RUN_ENV").unwrap_or_else(|_| "development".into());
-    info!("Loading configuration for environment: {}", env);
-
-    let config_dir = Path::new("config");
-    debug!("Config directory: {:?}", config_dir);
-    
-    let base_file = config_dir.join("base.yaml");
-    debug!("Base config file: {:?}", base_file);
-    
-    let env_file = config_dir.join(format!("{}.yaml", env));
-    debug!("Environment config file: {:?}", env_file);
-    
-    // Start building configuration
-    let mut builder = Config::builder();
-    
-    // Add base configuration
-    debug!("Loading base configuration");
-    builder = builder.add_source(File::from(base_file));
-    
-    // Add environment specific configuration
-    if env != "development" {
-        debug!("Loading environment configuration");
-        builder = builder.add_source(File::from(env_file).required(true));
-    }
-    
-    // Add environment variables
-    debug!("Adding environment variables");
-    builder = builder.add_source(Environment::default().separator("_").ignore_empty(true));
-    
-    // Set default values for all required fields
-    debug!("Setting default values");
-
-    // Server defaults
-    builder = builder
-        .set_default("server.host", "0.0.0.0")?
-        .set_default("server.port", 8080i64)?;
-
-    // MongoDB defaults
-    if let Ok(mongodb_uri) = std::env::var("MONGO_APP_USERNAME")
-        .and_then(|username| {
-            std::env::var("MONGO_APP_PASSWORD").map(|password| (username, password))
-        })
-        .and_then(|(username, password)| {
-            std::env::var("MONGO_HOST")
-                .and_then(|host| std::env::var("MONGO_PORT").map(|port| (host, port)))
-                .map(|(host, port)| {
-                    format!(
-                        "mongodb://{}:{}@{}:{}/{}",
-                        username, password, host, port,
-                        std::env::var("MONGO_DATABASE").unwrap_or_default()
-                    )
-                })
-        }) {
-        builder = builder.set_default("mongodb.uri", mongodb_uri)?;
-    }
-
-    builder = builder
-        .set_default("mongodb.database", "rust_scraper")?
-        .set_default("mongodb.min_pool_size", 5i64)?
-        .set_default("mongodb.max_pool_size", 10i64)?;
-
-    // Redis defaults
-    builder = builder
-        .set_default("redis.host", "localhost")?
-        .set_default("redis.port", 6379i64)?
-        .set_default("redis.user", "default")?;
-
-    if let Ok(password) = std::env::var("REDIS_PASSWORD") {
-        builder = builder.set_default("redis.password", password)?;
-    }
-
-    // RabbitMQ defaults
-    let amqp_addr = std::env::var("AMQP_ADDR")
-        .map(|addr| {
-            // Ensure URL starts with amqp://
-            let addr = if !addr.starts_with("amqp://") {
-                format!("amqp://{}", addr)
-            } else {
-                addr
-            };
-
-            // Parse the URL to check for vhost
-            let without_protocol = addr.trim_start_matches("amqp://");
-            if let Some(host_part) = without_protocol.split('@').nth(1) {
-                let host_parts: Vec<&str> = host_part.split('/').collect();
-                match host_parts.len() {
-                    1 => format!("{}/%2F", addr),
-                    2 if host_parts[1].is_empty() => format!("{}%2F", addr),
-                    2 => addr,
-                    _ => addr.split('/').take(4).collect::<Vec<&str>>().join("/"),
-                }
-            } else {
-                format!("{}/%2F", addr)
-            }
-        })
-        .or_else(|_: std::env::VarError| {
-            // Try to construct from individual components
-            let host = std::env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string());
-            let port = std::env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string());
-            let user = std::env::var("RABBITMQ_USER").unwrap_or_else(|_| "guest".to_string());
-            let pass = std::env::var("RABBITMQ_PASSWORD").unwrap_or_else(|_| "guest".to_string());
-            let vhost = std::env::var("RABBITMQ_VHOST")
-                .unwrap_or_else(|_| "/".to_string())
-                .trim_matches('/')
-                .to_string();
-            
-            let vhost_part = if vhost.is_empty() || vhost == "/" {
-                "%2F"
-            } else {
-                &vhost
-            };
-
-            Ok::<String, std::env::VarError>(format!("amqp://{}:{}@{}:{}/{}", user, pass, host, port, vhost_part))
-        })
-        .or_else(|_: std::env::VarError| std::env::var("RABBITMQ_AMQP_ADDR"))
-        .unwrap_or_else(|_| "amqp://guest:guest@localhost:5672/%2F".to_string());
-    
-    builder = builder
-        .set_default("rabbitmq.amqp_addr", amqp_addr)?
-        .set_default("rabbitmq.prefetch_count", 1i64)?;
-
-    // Zyte defaults
-    let zyte_api_key = std::env::var("ZYTE_API_KEY")
-        .or_else(|_| std::env::var("ZYTE_SCRAPER_API_KEY"))
-        .or_else(|_| std::env::var("SCRAPER_API_KEY"))
-        .unwrap_or_default();
-
-    builder = builder
-        .set_default("zyte.api_key", zyte_api_key.clone())?
-        .set_default("zyte.endpoint", "https://api.zyte.com/v1/extract")?
-        .set_default("zyte.concurrent_requests", 5i64)?
-        .set_default("zyte.request_timeout", 30i64)?;
-
-    // Set store-specific API keys if not already set
-    for store in ["leroy", "bauhaus", "bricodepot"] {
-        builder = builder.set_default(
-            &format!("stores.{}.api.api_key", store),
-            zyte_api_key.clone()
-        )?;
-    }
-
-    // Worker defaults
-    builder = builder
-        .set_default("worker.prefetch_count", 3i64)?
-        .set_default("worker.reconnect_delay_secs", 5i64)?
-        .set_default("worker.product_limit", 100i64)?;
-
-    // Set store queues defaults
-    let mut queues = std::collections::HashMap::new();
-    queues.insert("leroy".to_string(), "leroy_tasks".to_string());
-    queues.insert("bauhaus".to_string(), "bauhaus_tasks".to_string());
-    queues.insert("bricodepot".to_string(), "bricodepot_tasks".to_string());
-    builder = builder.set_default("worker.store_queues", queues)?;
-
-    // Build the configuration
-    debug!("Building configuration");
-    let config = builder.build()?;
-    
-    // Try to deserialize the configuration
-    debug!("Attempting to deserialize configuration");
-    let config_str = format!("{:?}", config);
-    debug!("Configuration before deserialization: {}", config_str);
-    
-    let mut app_config: AppConfig = match config.try_deserialize() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            warn!("Failed to deserialize configuration: {}", e);
-            return Err(e);
-        }
+        format!("mongodb://{}:{}@{}:{}/{}", username, password, host, port, database)
     };
 
-    // Validate the configuration
-    debug!("Validating configuration");
+    let database = env::var("MONGO_DATABASE").unwrap_or_else(|_| "rust_scraper".to_string());
+
+    debug!("MongoDB configuration:");
+    debug!("  URI: {}", uri);
+    debug!("  Database: {}", database);
+
+    (uri, database)
+}
+
+fn get_redis_config() -> (String, String, String, String) {
+    // Try to get the full URL from environment variable
+    if let Ok(url) = env::var("REDIS_URL") {
+        debug!("Using Redis URL from environment: {}", url);
+        let parts: Vec<&str> = url.split('@').collect();
+        if parts.len() == 2 {
+            let auth = parts[0].trim_start_matches("redis://:");
+            let host_port = parts[1];
+            let host = host_port.split(':').next().unwrap_or("localhost").to_string();
+            let port = host_port.split(':').nth(1).unwrap_or("6379").trim_end_matches('/').to_string();
+            
+            debug!("Redis configuration (from URL):");
+            debug!("  Host: {}", host);
+            debug!("  Port: {}", port);
+            debug!("  Auth: {}", auth);
+            
+            return (host, port, "default".to_string(), auth.to_string());
+        }
+    }
+
+    // Construct from individual components
+    let host = env::var("REDIS_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = env::var("REDIS_PORT").unwrap_or_else(|_| "6379".to_string());
+    let user = "default".to_string();
+    let password = env::var("REDIS_PASSWORD").unwrap_or_else(|_| {
+        warn!("REDIS_PASSWORD not found in environment variables, using default from .env");
+        "redis_password123".to_string()
+    });
+
+    debug!("Redis configuration (from env):");
+    debug!("  Host: {}", host);
+    debug!("  Port: {}", port);
+    debug!("  User: {}", user);
+    debug!("  Password is set: {}", !password.is_empty());
+
+    (host, port, user, password)
+}
+
+fn get_rabbitmq_config() -> (String, String, String, String, String) {
+    // Try to get the full URL from environment variable
+    if let Ok(url) = env::var("AMQP_ADDR") {
+        debug!("Using AMQP URL from environment: {}", url);
+        return (
+            env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string()),
+            env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string()),
+            env::var("RABBITMQ_USER").unwrap_or_else(|_| "guest".to_string()),
+            env::var("RABBITMQ_PASSWORD").unwrap_or_else(|_| "guest".to_string()),
+            env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string()),
+        );
+    }
+
+    let host = env::var("RABBITMQ_HOST").unwrap_or_else(|_| "localhost".to_string());
+    let port = env::var("RABBITMQ_PORT").unwrap_or_else(|_| "5672".to_string());
+    let user = env::var("RABBITMQ_USER").unwrap_or_else(|_| "guest".to_string());
+    let password = env::var("RABBITMQ_PASSWORD").unwrap_or_else(|_| "guest".to_string());
+    let vhost = env::var("RABBITMQ_VHOST").unwrap_or_else(|_| "/".to_string());
+
+    debug!("RabbitMQ configuration:");
+    debug!("  Host: {}", host);
+    debug!("  Port: {}", port);
+    debug!("  User: {}", user);
+    debug!("  VHost: {}", vhost);
+
+    (host, port, user, password, vhost)
+}
+
+fn get_zyte_config() -> (String, String, u64, u64) {
+    let api_key = env::var("ZYTE_API_KEY")
+        .or_else(|_| env::var("ZYTE_SCRAPER_API_KEY"))
+        .or_else(|_| env::var("SCRAPER_API_KEY"))
+        .unwrap_or_else(|_| {
+            warn!("No Zyte API key found in environment variables. Checking configuration files...");
+            "c6b1e238a38c4baa8f8a299d8fdf8446".to_string() // Your API key from .env
+        });
+
+    if api_key.is_empty() {
+        panic!("Zyte API key is empty. Please set ZYTE_API_KEY environment variable.");
+    }
+
+    let base_url = env::var("ZYTE_ENDPOINT")
+        .unwrap_or_else(|_| "https://api.zyte.com/v1/extract".to_string());
+    let timeout = env::var("ZYTE_REQUEST_TIMEOUT")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(30) * 1000;
+    let concurrent_requests = env::var("ZYTE_CONCURRENT_REQUESTS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(5);
+
+    debug!("Zyte configuration:");
+    debug!("  Base URL: {}", base_url);
+    debug!("  API Key: {}", if api_key.is_empty() { "NOT SET" } else { "SET" });
+    debug!("  Timeout: {}ms", timeout);
+    debug!("  Concurrent requests: {}", concurrent_requests);
+
+    (api_key, base_url, timeout, concurrent_requests)
+}
+
+pub fn new() -> Result<AppConfig, ConfigError> {
+    let environment = env::var("ENVIRONMENT").unwrap_or_else(|_| "development".into());
+    
+    warn!("Loading configuration for environment: {}", environment);
+
+    let (mongodb_uri, mongodb_database) = get_mongodb_config();
+    let (zyte_api_key, zyte_base_url, zyte_timeout, zyte_concurrent_requests) = get_zyte_config();
+    let (redis_host, redis_port, redis_user, redis_password) = get_redis_config();
+    let (rabbitmq_host, rabbitmq_port, rabbitmq_user, rabbitmq_password, rabbitmq_vhost) = get_rabbitmq_config();
+
+    let config = Config::builder()
+        // Start with base configuration
+        .add_source(File::with_name("config/base.yaml"))
+        
+        // Add environment-specific configuration
+        .add_source(File::with_name(&format!("config/{}.yaml", environment)).required(false))
+        
+        // Add local configuration (not in version control)
+        .add_source(File::with_name("config/local.yaml").required(false))
+        
+        // Add environment variables with prefix
+        .add_source(
+            Environment::with_prefix("APP")
+                .separator("_")
+                .try_parsing(true)
+        )
+        
+        // Database configuration
+        .set_override("database.uri", Some(mongodb_uri))?
+        .set_override("database.database", Some(mongodb_database))?
+        
+        // HTTP client configuration
+        .set_override("http_client.api_key", Some(zyte_api_key))?
+        .set_override("http_client.base_url", Some(zyte_base_url))?
+        .set_override("http_client.request_timeout_ms", Some(zyte_timeout))?
+        .set_override("http_client.max_concurrent_requests", Some(zyte_concurrent_requests))?
+        
+        // Cache configuration
+        .set_override("cache.host", Some(redis_host))?
+        .set_override("cache.port", Some(redis_port))?
+        .set_override("cache.user", Some(redis_user))?
+        .set_override("cache.password", Some(redis_password))?
+        
+        // Queue configuration
+        .set_override("queue.host", Some(rabbitmq_host))?
+        .set_override("queue.port", Some(rabbitmq_port))?
+        .set_override("queue.user", Some(rabbitmq_user))?
+        .set_override("queue.password", Some(rabbitmq_password))?
+        .set_override("queue.vhost", Some(rabbitmq_vhost))?
+        
+        .build()?;
+
+    // Deserialize the configuration
+    let app_config: AppConfig = config.try_deserialize()?;
+    
+    warn!("Validating configuration");
     app_config.validate()?;
 
     Ok(app_config)

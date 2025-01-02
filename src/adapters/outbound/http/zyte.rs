@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 use async_trait::async_trait;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-use reqwest::Client;
+use reqwest::{Client, header::{HeaderMap, HeaderValue, AUTHORIZATION}};
 use serde_json::{json, Value};
 use tokio::time::sleep;
 use tracing::{info, error};
@@ -21,8 +21,22 @@ impl ZyteAdapter {
     const INITIAL_BACKOFF_MS: u64 = 1000; // 1 second
 
     pub fn new(api_key: String) -> Self {
+        // Create a client with default headers
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Basic {}", BASE64.encode(&format!("{}:", api_key))))
+                .expect("Failed to create Authorization header"),
+        );
+
+        let client = Client::builder()
+            .default_headers(headers)
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("Failed to create HTTP client");
+
         Self {
-            client: Arc::new(Client::new()),
+            client: Arc::new(client),
             api_key,
             base_url: "https://api.zyte.com/v1/extract".to_string(),
         }
@@ -60,55 +74,46 @@ impl ZyteAdapter {
             }
         }
 
-        Err(last_error.unwrap_or_else(|| DomainError::http("Max retries exceeded")))
+        Err(last_error.unwrap())
     }
 }
 
 #[async_trait]
 impl HttpClientPort for ZyteAdapter {
     async fn get(&self, url: &str) -> Result<String, DomainError> {
-        self.get_rendered_html(url).await
+        self.make_request_with_retry(|| async {
+            let response = self.client
+                .post(&self.base_url)
+                .json(&json!({
+                    "url": url,
+                    "browserHtml": true,
+                }))
+                .send()
+                .await
+                .map_err(|e| DomainError::Http(format!("Failed to send request: {}", e)))?;
+
+            if !response.status().is_success() {
+                error!("Zyte API request failed with status code: {}", response.status());
+                return Err(DomainError::Http(format!(
+                    "Zyte API request failed with status code: {}",
+                    response.status()
+                )));
+            }
+
+            let json: Value = response
+                .json()
+                .await
+                .map_err(|e| DomainError::Http(format!("Failed to parse response: {}", e)))?;
+
+            Ok(json["browserHtml"]
+                .as_str()
+                .ok_or_else(|| DomainError::Http("No HTML content in response".to_string()))?
+                .to_string())
+        })
+        .await
     }
 
     async fn get_rendered_html(&self, url: &str) -> Result<String, DomainError> {
-        info!("Fetching page content from URL: {}", url);
-        
-        self.make_request_with_retry(|| async {
-            let payload = json!({
-                "url": url,
-                "browserHtml": true
-            });
-
-            let response = self.client
-                .post(&self.base_url)
-                .header("Authorization", format!("Basic {}", BASE64.encode(&format!("{}:", self.api_key))))
-                .json(&payload)
-                .send()
-                .await
-                .map_err(|e| DomainError::http(format!("Failed to send request: {}", e)))?;
-
-            if !response.status().is_success() {
-                let error_msg = format!(
-                    "Zyte API request failed with status code: {}",
-                    response.status()
-                );
-                error!("{}", error_msg);
-                return Err(DomainError::http(error_msg));
-            }
-
-            let json_response = response.json::<Value>().await
-                .map_err(|e| DomainError::http(format!("Failed to parse JSON response: {}", e)))?;
-                
-            let rendered_html = json_response.get("browserHtml")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    let msg = "Rendered HTML is missing in Zyte API response.";
-                    error!("{}", msg);
-                    DomainError::http(msg)
-                })?;
-
-            Ok(rendered_html.to_string())
-        })
-        .await
+        self.get(url).await
     }
 } 

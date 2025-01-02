@@ -4,36 +4,41 @@ server:
   host: "0.0.0.0"  # Listen on all interfaces
   port: 8080
 
-mongodb:
-  uri: ""
-  database: "rust_scraper"
+database:
+  uri: "mongodb://rust_scraper:rust_scraper_password@localhost:27017/rust_scraper"
+  database: "rust_scraper"  # Database name
   min_pool_size: 5
   max_pool_size: 10
+  connection_timeout_ms: 5000
 
-redis:
+cache:
   host: "localhost"
   port: 6379
   user: "default"
-  password: ""
+  password: "redis_password123"  # Default password from .env
+  default_ttl_secs: 3600
+  connection_timeout_ms: 5000
+  max_connections: 10
+  auth_required: true  # Indicates that Redis requires authentication
 
-rabbitmq:
-  amqp_addr: ""
-  prefetch_count: 1
+queue:
+  host: "localhost"
+  port: 5672
+  user: "guest"
+  password: "guest"
+  queue_name: "scraper_queue"
+  prefetch_count: 10
+  connection_timeout_ms: 5000
+  retry_interval_ms: 1000
+  max_retries: 3
 
-zyte:
-  api_key: ""
-  endpoint: "https://api.zyte.com/v1/extract"
-  concurrent_requests: 5
-  request_timeout: 30
-
-worker:
-  prefetch_count: 3
-  reconnect_delay_secs: 5
-  product_limit: 100
-  store_queues:
-    leroy: "leroy_tasks"
-    bauhaus: "bauhaus_tasks"
-    bricodepot: "bricodepot_tasks"
+http_client:
+  base_url: "https://api.zyte.com/v1/extract"
+  api_key: ""  # Will be overridden by environment variable
+  request_timeout_ms: 30000
+  max_concurrent_requests: 5
+  max_retries: 3
+  retry_delay_ms: 1000
 
 stores:
   leroy:
@@ -42,7 +47,7 @@ stores:
     search_endpoint: "/search"
     api:
       api_type: "zyte"
-      api_key: ""
+      api_key: ""  # Will use the global Zyte API key
   
   bricodepot:
     name: "Bricodepot"
@@ -50,7 +55,7 @@ stores:
     search_endpoint: "/productos/buscar"
     api:
       api_type: "zyte"
-      api_key: ""
+      api_key: ""  # Will use the global Zyte API key
 
   bauhaus:
     name: "Bauhaus"
@@ -58,4 +63,4 @@ stores:
     search_endpoint: "/search"
     api:
       api_type: "zyte"
-      api_key: ""
+      api_key: ""  # Will use the global Zyte API key

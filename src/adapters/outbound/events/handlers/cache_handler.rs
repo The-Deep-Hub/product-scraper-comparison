@@ -36,8 +36,11 @@ impl EventHandler for ProductCacheHandler {
                     metadata.id
                 );
 
-                // Cache the products
-                self.cache.cache_products(&query, &products).await?;
+                // Cache the products for this specific store
+                if let Err(e) = self.cache.cache_store_products(&query, &store, &products).await {
+                    error!("Failed to cache products for store {}: {}", store, e);
+                    return Err(e);
+                }
 
                 // Emit ProductsCached event
                 self.event_publisher

@@ -1,10 +1,11 @@
 use async_trait::async_trait;
 use redis::{aio::ConnectionManager, AsyncCommands};
-use tracing::{info};
+use tracing::{info, debug};
 
 use crate::domain::{
     models::{Product, DomainError, Store},
     ports::outbound::CachePort,
+    config::CacheConfig,
 };
 
 #[derive(Clone)]
@@ -13,17 +14,28 @@ pub struct RedisAdapter {
 }
 
 impl RedisAdapter {
-    pub async fn new() -> Result<Self, DomainError> {
-        let redis_url = std::env::var("REDIS_URL")
-            .unwrap_or_else(|_| "redis://localhost:6379".to_string());
+    pub async fn new(config: Box<dyn CacheConfig>) -> Result<Self, DomainError> {
+        let redis_url = config.connection_url();
         
+        debug!("Redis URL: {}", redis_url);
         info!("Connecting to Redis at: {}", "*".repeat(redis_url.len()));
         
         let client = redis::Client::open(redis_url)
-            .map_err(|e| DomainError::cache(format!("Failed to create Redis client: {}", e)))?
-            .get_tokio_connection_manager()
+            .map_err(|e| DomainError::cache(format!("Failed to create Redis client: {}", e)))?;
+
+        // Test the connection before creating the manager
+        let mut conn = client.get_async_connection().await
+            .map_err(|e| DomainError::cache(format!("Failed to test Redis connection: {}", e)))?;
+
+        // Test authentication
+        let _: String = redis::cmd("PING")
+            .query_async(&mut conn)
             .await
-            .map_err(|e| DomainError::cache(format!("Failed to get Redis connection: {}", e)))?;
+            .map_err(|e| DomainError::cache(format!("Failed to authenticate with Redis: {}", e)))?;
+
+        let client = client.get_tokio_connection_manager()
+            .await
+            .map_err(|e| DomainError::cache(format!("Failed to get Redis connection manager: {}", e)))?;
         
         info!("Successfully connected to Redis");
         Ok(Self { client })

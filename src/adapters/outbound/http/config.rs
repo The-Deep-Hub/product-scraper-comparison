@@ -1,62 +1,52 @@
 use serde::Deserialize;
+use std::time::Duration;
+use crate::domain::config::HttpConfig;
 
-/// Zyte adapter configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct ZyteConfig {
-    #[serde(default)]
-    pub api_key: String,
-    #[serde(default = "default_endpoint")]
-    pub endpoint: String,
-    #[serde(default = "default_concurrent_requests")]
-    pub concurrent_requests: u32,
-    #[serde(default = "default_request_timeout")]
-    pub request_timeout: u32,
-}
-
-fn default_endpoint() -> String {
-    "https://api.zyte.com/v1/extract".to_string()
-}
-
-fn default_concurrent_requests() -> u32 {
-    5
-}
-
-fn default_request_timeout() -> u32 {
-    30
+    pub base_url: String,
+    pub api_key: Option<String>,
+    pub request_timeout_ms: Option<u64>,
+    pub max_concurrent_requests: Option<u32>,
+    pub max_retries: Option<u32>,
+    pub retry_delay_ms: Option<u64>,
 }
 
 impl Default for ZyteConfig {
     fn default() -> Self {
-        let api_key = std::env::var("ZYTE_API_KEY")
-            .or_else(|_| std::env::var("ZYTE_SCRAPER_API_KEY"))
-            .or_else(|_| std::env::var("SCRAPER_API_KEY"))
-            .unwrap_or_default();
-
         Self {
-            api_key,
-            endpoint: default_endpoint(),
-            concurrent_requests: default_concurrent_requests(),
-            request_timeout: default_request_timeout(),
+            base_url: "https://api.zyte.com/v1".to_string(),
+            api_key: None,
+            request_timeout_ms: Some(30000),
+            max_concurrent_requests: Some(5),
+            max_retries: Some(3),
+            retry_delay_ms: Some(1000),
         }
     }
 }
 
-impl ZyteConfig {
-    /// Validates the configuration
-    pub fn validate(&mut self) -> Result<(), String> {
-        let api_key = if self.api_key.is_empty() {
-            std::env::var("ZYTE_API_KEY")
-                .or_else(|_| std::env::var("ZYTE_SCRAPER_API_KEY"))
-                .or_else(|_| std::env::var("SCRAPER_API_KEY"))
-                .unwrap_or_default()
-        } else {
-            self.api_key.clone()
-        };
-
-        if api_key.is_empty() {
-            return Err("Zyte API key is not configured. Please set either ZYTE_API_KEY, ZYTE_SCRAPER_API_KEY, or SCRAPER_API_KEY environment variable.".to_string());
-        }
-        self.api_key = api_key;
-        Ok(())
+impl HttpConfig for ZyteConfig {
+    fn base_url(&self) -> String {
+        self.base_url.clone()
+    }
+    
+    fn api_key(&self) -> Option<String> {
+        self.api_key.clone()
+    }
+    
+    fn request_timeout(&self) -> Duration {
+        Duration::from_millis(self.request_timeout_ms.unwrap_or(30000))
+    }
+    
+    fn max_concurrent_requests(&self) -> u32 {
+        self.max_concurrent_requests.unwrap_or(5)
+    }
+    
+    fn max_retries(&self) -> u32 {
+        self.max_retries.unwrap_or(3)
+    }
+    
+    fn retry_delay(&self) -> Duration {
+        Duration::from_millis(self.retry_delay_ms.unwrap_or(1000))
     }
 } 
