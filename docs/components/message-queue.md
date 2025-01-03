@@ -6,6 +6,42 @@
 
 </div>
 
+## 📑 Table of Contents
+
+<details open>
+<summary><strong>Core System</strong></summary>
+
+- [Introduction](#introduction)
+- [Current Configuration](#current-configuration)
+- [Architecture](#architecture)
+- [Implementation Details](#implementation-details)
+</details>
+
+<details open>
+<summary><strong>Operations & Management</strong></summary>
+
+- [Local Development Setup](#-local-development-environment)
+- [Monitoring & Metrics](#monitoring--metrics)
+- [Maintenance and Operations](#-maintenance-and-operations)
+- [Troubleshooting Guide](#troubleshooting-guide)
+</details>
+
+<details open>
+<summary><strong>Scaling & Evolution</strong></summary>
+
+- [Scaling the System](#-scaling-the-system)
+- [Queue Service Interchangeability](#-queue-service-interchangeability)
+- [System Improvements Roadmap](#-system-improvements-roadmap)
+</details>
+
+<details open>
+<summary><strong>Configuration & Best Practices</strong></summary>
+
+- [Docker Configuration](#-docker-configuration)
+- [Best Practices](#best-practices)
+- [Migration Strategies](#migration-strategy)
+</details>
+
 ## Introduction
 
 The RabbitMQ message queue system serves as the backbone of our distributed task processing architecture. It enables reliable, asynchronous communication between the API server and worker nodes, ensuring efficient distribution and processing of scraping tasks.
@@ -94,48 +130,6 @@ graph TD
 [Configuration](#configuration) •
 [Testing](../testing/queue-testing.md)
 
-</div>
-
-## 📑 Table of Contents
-
-<details open>
-<summary><strong>Overview & Architecture</strong></summary>
-
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Key Features](#key-features)
-- [Queue Structure](#queue-structure)
-</details>
-
-<details open>
-<summary><strong>Implementation</strong></summary>
-
-- [Implementation Details](#implementation-details)
-  - [Connection Management](#connection-management)
-  - [Core Operations](#core-operations)
-- [Message Flow](#message-flow)
-  - [Task Publishing](#task-publishing)
-  - [Task Processing](#task-processing)
-  - [Error Handling](#error-handling)
-</details>
-
-<details open>
-<summary><strong>Queue Management</strong></summary>
-
-- [Exchange Types](#exchange-types)
-- [Queue Bindings](#queue-bindings)
-- [Message Properties](#message-properties)
-- [Dead Letter Handling](#dead-letter-handling)
-</details>
-
-## Overview
-
-The RabbitMQ system serves as the backbone for distributed task processing in our web scraping infrastructure. It ensures reliable message delivery, handles task distribution, and provides robust error recovery mechanisms.
-
-> 📘 **Testing Documentation**
->
-> For detailed information about testing strategies and implementation, please refer to our [Queue Testing Guide](../testing/queue-testing.md).
-
 ## Architecture
 
 ```mermaid
@@ -167,61 +161,6 @@ graph TB
     DLX -->|Dead Letter| DLQ
     RetryQ -->|Requeue| Exchange
     DLQ -->|Handle| ErrorHandler
-```
-
-## Key Features
-
-- **Reliable Message Delivery**: At-least-once delivery guarantee
-- **Dead Letter Handling**: Automatic handling of failed messages
-- **Retry Mechanism**: Configurable retry policies with exponential backoff
-- **Priority Queues**: Support for task prioritization
-- **Message TTL**: Automatic message expiration
-- **Consumer Prefetch**: Optimized message distribution
-
-## Queue Structure
-
-### Exchange Configuration
-```rust
-pub struct ExchangeConfig {
-    name: String,
-    kind: ExchangeKind,
-    durable: bool,
-    auto_delete: bool,
-    arguments: HashMap<String, AMQPValue>,
-}
-
-impl ExchangeConfig {
-    pub fn new_task_exchange() -> Self {
-        Self {
-            name: "scraper.tasks".into(),
-            kind: ExchangeKind::Topic,
-            durable: true,
-            auto_delete: false,
-            arguments: HashMap::new(),
-        }
-    }
-}
-```
-
-### Queue Configuration
-```rust
-pub struct QueueConfig {
-    name: String,
-    durable: bool,
-    exclusive: bool,
-    auto_delete: bool,
-    arguments: HashMap<String, AMQPValue>,
-}
-
-impl QueueConfig {
-    pub fn with_dead_letter(mut self, exchange: &str) -> Self {
-        self.arguments.insert(
-            "x-dead-letter-exchange".into(),
-            AMQPValue::LongString(exchange.into()),
-        );
-        self
-    }
-}
 ```
 
 ## Implementation Details
@@ -785,4 +724,3 @@ impl MessageQueue for SQSAdapter {
    - Test edge cases
    - Verify conversions
    - Simulate failures
-``` 
