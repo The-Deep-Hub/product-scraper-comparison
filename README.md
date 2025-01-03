@@ -21,16 +21,77 @@ This distributed system orchestrates web scraping operations across multiple hom
    - Maintains scraping metrics and statistics
 
 4. **Database Layer (MongoDB)**:
-   - Persistent storage for product data
-   - Historical price tracking
-   - User preferences and search history
-   - Analytics and reporting data
+   - User authentication and authorization data
+   - Session management
+   - Future extensibility for product data persistence
 
 5. **Scraping Engine (Zyte Integration)**:
    - Leverages Zyte's smart proxy network for reliable scraping
    - Handles JavaScript rendering and browser automation
    - Manages IP rotation and request throttling
    - Provides advanced session management
+
+### System Architecture
+
+```mermaid
+graph TB
+    subgraph "External Layer"
+        Client[Client Applications]
+        Zyte[Zyte Proxy Network]
+    end
+
+    subgraph "API Gateway"
+        API[API Server]
+        Auth[Auth Middleware]
+    end
+
+    subgraph "Core Services"
+        Worker[Worker Service]
+        EventBus[Event Bus]
+    end
+
+    subgraph "Data Storage"
+        Redis[(Redis Cache)]
+        MongoDB[(MongoDB)]
+        RMQ[(RabbitMQ)]
+    end
+
+    subgraph "Scraping Layer"
+        Scraper[Scraper Service]
+        RateLimit[Rate Limiter]
+    end
+
+    %% Client Interactions
+    Client -->|HTTP Requests| API
+    API -->|Auth Check| Auth
+    Auth -->|Verify| MongoDB
+
+    %% Task Flow
+    API -->|Enqueue Tasks| RMQ
+    RMQ -->|Process Tasks| Worker
+    Worker -->|Dispatch| Scraper
+    
+    %% Data Flow
+    Scraper -->|Check Cache| Redis
+    Scraper -->|Proxy Requests| Zyte
+    Scraper -->|Store Results| Redis
+    
+    %% Event Flow
+    Worker -->|Emit Events| EventBus
+    EventBus -->|Log Metrics| Redis
+
+    %% Rate Limiting
+    Scraper -->|Check Limits| RateLimit
+    RateLimit -->|Track Rates| Redis
+
+    classDef external fill:#f9f,stroke:#333,stroke-width:2px
+    classDef storage fill:#ff9,stroke:#333,stroke-width:2px
+    classDef service fill:#9f9,stroke:#333,stroke-width:2px
+    
+    class Client,Zyte external
+    class Redis,MongoDB,RMQ storage
+    class API,Worker,Scraper,EventBus,RateLimit,Auth service
+```
 
 ### Sequence Diagrams
 
@@ -57,41 +118,12 @@ sequenceDiagram
         W->>R: Check Rate Limits
         W->>Z: Scrape Products
         Z-->>W: Raw Data
-        W->>M: Store Results
         W->>R: Cache Results
         W->>Q: Task Complete
         C->>A: Poll Results
-        A->>M: Fetch Results
-        M-->>A: Product Data
+        A->>R: Fetch Results
+        R-->>A: Product Data
         A-->>C: Return Results
-    end
-```
-
-#### Price Update Flow
-```mermaid
-sequenceDiagram
-    participant S as Scheduler
-    participant Q as RabbitMQ
-    participant W as Worker
-    participant Z as Zyte
-    participant M as MongoDB
-    participant R as Redis
-    participant E as Event System
-
-    S->>M: Get Products to Update
-    M-->>S: Product List
-    loop Each Product
-        S->>Q: Enqueue Update Task
-    end
-    Q->>W: Process Task
-    W->>R: Check Rate Limits
-    W->>Z: Fetch Latest Price
-    Z-->>W: Price Data
-    W->>M: Update Price History
-    W->>R: Update Cache
-    W->>E: Emit Price Change Event
-    alt Price Changed
-        E->>Q: Enqueue Notification Task
     end
 ```
 
