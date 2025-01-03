@@ -66,23 +66,24 @@ graph TB
     API -->|Auth Check| Auth
     Auth -->|Verify| MongoDB
 
+    %% Cache Flow
+    API -->|1. Check Cache| Redis
+    Redis -->|Cache Hit| API
+    API -->|Cache Miss| RMQ
+
     %% Task Flow
-    API -->|Enqueue Tasks| RMQ
     RMQ -->|Process Tasks| Worker
     Worker -->|Dispatch| Scraper
     
     %% Data Flow
-    Scraper -->|Check Cache| Redis
+    Scraper -->|Check Rate Limits| RateLimit
+    RateLimit -->|Verify| Redis
     Scraper -->|Proxy Requests| Zyte
     Scraper -->|Store Results| Redis
     
     %% Event Flow
     Worker -->|Emit Events| EventBus
     EventBus -->|Log Metrics| Redis
-
-    %% Rate Limiting
-    Scraper -->|Check Limits| RateLimit
-    RateLimit -->|Track Rates| Redis
 
     classDef external fill:#f9f,stroke:#333,stroke-width:2px
     classDef storage fill:#ff9,stroke:#333,stroke-width:2px
@@ -351,3 +352,66 @@ We welcome contributions! Please follow these steps:
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🏗️ Hexagonal Architecture Implementation
+
+Our implementation follows the hexagonal (ports and adapters) pattern, isolating the domain core from external concerns:
+
+```mermaid
+graph TB
+    subgraph "Domain Core"
+        direction TB
+        Models[Domain Models]
+        Services[Domain Services]
+        Ports[Port Interfaces]
+        Events[Domain Events]
+    end
+
+    subgraph "Inbound Adapters"
+        direction TB
+        REST[REST API]
+        CLI[CLI Interface]
+        TaskProcessor[Task Processor]
+        -->|Implements| InPorts[Inbound Ports]
+    end
+
+    subgraph "Outbound Adapters"
+        direction TB
+        OutPorts[Outbound Ports] -->|Implemented by|Implementations
+        subgraph "Implementations"
+            direction TB
+            Scrapers[Store Scrapers]
+            Cache[Redis Cache]
+            DB[MongoDB]
+            Queue[RabbitMQ]
+            Logger[Logger]
+            Metrics[Metrics]
+        end
+    end
+
+    %% Core Connections
+    InPorts -->|Uses| Models
+    Models -->|Used by| Services
+    Services -->|Uses| Ports
+    Services -->|Emits| Events
+    Events -->|Handled by| Services
+
+    %% Port Connections
+    Ports -->|Defines| OutPorts
+    InPorts -->|Uses| Services
+
+    classDef core fill:#f9f,stroke:#333,stroke-width:2px
+    classDef inbound fill:#9f9,stroke:#333,stroke-width:2px
+    classDef outbound fill:#ff9,stroke:#333,stroke-width:2px
+    
+    class Models,Services,Ports,Events core
+    class REST,CLI,TaskProcessor,InPorts inbound
+    class OutPorts,Scrapers,Cache,DB,Queue,Logger,Metrics outbound
+```
+
+The hexagonal architecture ensures:
+- Domain logic is isolated from external concerns
+- Dependencies point inward toward the domain core
+- Adapters implement ports for external communication
+- Easy testing through port interfaces
+- Flexible infrastructure switching without core changes
