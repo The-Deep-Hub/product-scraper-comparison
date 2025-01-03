@@ -12,54 +12,82 @@ The RabbitMQ message queue system serves as the backbone of our distributed task
 
 ### Current Configuration
 
-Our RabbitMQ setup consists of the following components:
+Our RabbitMQ setup implements a per-worker queue architecture:
 
 1. **Exchange Configuration**
    - Name: `scraper.tasks`
    - Type: Direct Exchange
    - Durability: Enabled
    - Auto-delete: Disabled
+   - Routes tasks to specific worker queues based on routing keys
 
-2. **Main Queue**
-   - Name: `scraping_tasks`
+2. **Worker Queues**
+   - Pattern: `scraping_tasks_worker_{id}` (one queue per worker)
+   - Each worker has its dedicated queue
    - Durability: Enabled
    - Arguments:
      - `x-dead-letter-exchange`: `scraper.dlx`
      - `x-message-ttl`: 3600000 (1 hour)
+   - Binding key: Matches worker ID
 
-3. **Dead Letter Exchange (DLX)**
+3. **Worker Management**
+   - Each worker exclusively consumes from its queue
+   - Worker ID is used as routing key
+   - Automatic queue creation on worker startup
+   - Queue cleanup on worker shutdown
+
+4. **Load Distribution**
+   - Tasks are distributed using consistent hashing
+   - Based on worker ID and task parameters
+   - Ensures even distribution across workers
+   - Maintains task affinity when needed
+
+5. **Dead Letter Exchange (DLX)**
    - Name: `scraper.dlx`
    - Type: Direct Exchange
-   - Handles failed messages
+   - One DLQ per worker queue
+   - Pattern: `scraping_tasks_failed_worker_{id}`
 
-4. **Dead Letter Queue**
-   - Name: `scraping_tasks_failed`
-   - Stores messages that couldn't be processed
-   - Used for debugging and retry mechanisms
-
-5. **Message Properties**
+6. **Message Properties**
    - Persistence: Enabled
    - Priority: Supported (1-10)
    - Content Type: application/json
    - Delivery Mode: Persistent (2)
+   - Routing Key: Contains worker ID
 
-6. **Consumer Settings**
-   - Prefetch Count: 10
+7. **Per-Worker Settings**
+   - Prefetch Count: 10 (per worker)
    - Auto-acknowledge: Disabled
    - Consumer Tag: `scraper_worker_{id}`
+   - Exclusive queue access
 
-7. **Connection Details**
+8. **Connection Details**
    - Port: 5672 (AMQP)
    - Management Port: 15672
    - Virtual Host: Default ("/")
    - SSL: Not enabled in development
 
-This configuration provides:
-- Reliable message delivery with persistence
-- Failed message handling through DLX
-- Message prioritization
-- Performance optimization through prefetch settings
-- Monitoring capabilities through the management interface
+This per-worker queue architecture provides:
+- Dedicated message processing per worker
+- No queue contention between workers
+- Independent scaling of individual workers
+- Isolated error handling per worker
+- Better task distribution control
+- Simplified worker management
+
+### Queue Creation Flow
+
+```mermaid
+graph TD
+    A[Worker Startup] -->|Generate Worker ID| B[Create Worker Queue]
+    B -->|Bind to Exchange| C[Setup DLQ]
+    C -->|Configure Bindings| D[Start Consuming]
+    E[API Server] -->|Route Task| F[Worker Selection]
+    F -->|Hash-based Routing| G[Specific Worker Queue]
+    G -->|Process Task| H[Worker Process]
+    H -->|Success| I[Acknowledge]
+    H -->|Failure| J[Worker-specific DLQ]
+```
 
 [Architecture](#architecture) •
 [Implementation](#implementation-details) •
