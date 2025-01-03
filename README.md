@@ -1,6 +1,61 @@
-# Rust Web Scraper with Hexagonal Architecture
+# 🌐 Rust Web Scraper
 
-A robust web scraping solution built in Rust following the Hexagonal Architecture (Ports and Adapters) pattern. This architecture ensures a clean separation of concerns, making the system highly maintainable, testable, and adaptable.
+<div align="center">
+
+![Rust Web Scraper](https://raw.githubusercontent.com/username/rust_scraper/main/docs/assets/header.png)
+
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Build Status](https://github.com/username/rust_scraper/workflows/CI/badge.svg)](https://github.com/username/rust_scraper/actions)
+[![codecov](https://codecov.io/gh/username/rust_scraper/branch/main/graph/badge.svg)](https://codecov.io/gh/username/rust_scraper)
+[![Docker](https://img.shields.io/docker/pulls/username/rust_scraper.svg)](https://hub.docker.com/r/username/rust_scraper)
+
+*A robust web scraping solution built in Rust following the Hexagonal Architecture pattern.*
+
+[Getting Started](#-getting-started) •
+[Documentation](#-documentation) •
+[Architecture](#-architecture) •
+[Contributing](#-contributing) •
+[License](#-license)
+
+</div>
+
+---
+
+## 📑 Table of Contents
+
+- [Overview](#-overview)
+- [Features](#-features)
+- [System Architecture](#-system-architecture)
+  - [Data Flow](#data-flow)
+  - [Hexagonal Architecture](#hexagonal-architecture)
+  - [Component Interactions](#component-interactions)
+- [Technology Stack](#-technology-stack)
+  - [Backend](#backend)
+  - [Frontend](#frontend)
+  - [Infrastructure](#infrastructure)
+- [Getting Started](#-getting-started)
+  - [Prerequisites](#prerequisites)
+  - [Installation](#installation)
+  - [Configuration](#configuration)
+- [Development](#-development)
+  - [Testing](#testing)
+  - [Code Style](#code-style)
+  - [Documentation](#documentation)
+- [Contributing](#-contributing)
+- [License](#-license)
+
+## 🎯 Overview
+
+Rust Web Scraper is a high-performance, distributed web scraping system designed with clean architecture principles. It provides reliable product data extraction from multiple e-commerce sources while maintaining excellent performance and scalability.
+
+### Key Highlights
+
+- 🏗️ **Clean Architecture**: Hexagonal design for maintainability
+- 🚀 **High Performance**: Async Rust for maximum efficiency
+- 🔄 **Distributed System**: Scalable microservices architecture
+- 🛡️ **Robust Design**: Comprehensive error handling and recovery
+- 📊 **Real-time Metrics**: Built-in monitoring and analytics
 
 ## 🔄 System Overview
 
@@ -523,3 +578,33 @@ We welcome contributions! Please follow these steps:
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🛠️ Technology Stack
+
+### Backend
+- **Core**: Rust 1.70+
+- **Web Framework**: Actix-web 4.0
+- **Database**: MongoDB 6.0
+- **Cache**: Redis 7.2
+- **Message Queue**: RabbitMQ 3.12
+- **Proxy Service**: Zyte Smart Proxy
+
+### Frontend
+- **Framework**: React 18 with TypeScript
+- **State**: Redux Toolkit
+- **Styling**: Tailwind CSS
+- **Real-time**: WebSocket
+
+### Infrastructure
+- **IaC**: Terraform
+- **Containers**: Docker
+- **CI/CD**: GitHub Actions
+- **Monitoring**: Prometheus & Grafana
+
+## 📚 Documentation
+
+Detailed documentation is available in the following sections:
+- [Architecture Guide](./docs/architecture.md)
+- [API Documentation](./docs/api.md)
+- [Development Guide](./docs/development.md)
+- [Deployment Guide](./docs/deployment.md)
