@@ -1,15 +1,17 @@
 # 🐰 RabbitMQ Message Queue System
 
 
-[Architecture](#architecture) •
-[Implementation](#implementation-details) •
-[Configuration](#configuration) •
-[Testing](../testing/queue-testing.md)
+
 
 
 <div align="center">
 
 *Documentation for the RabbitMQ message queue implementation*
+
+[Architecture](#architecture) •
+[Implementation](#implementation-details) •
+[Configuration](#configuration) •
+[Testing](../testing/queue-testing.md)
 
 </div>
 
