@@ -171,50 +171,174 @@ Driven by our application:
 - **Error Handling**: Centralized error types and handling
 - **Logging**: Structured logging setup
 
-## 🔌 Ports (Interfaces)
+## 🔌 Hexagonal Architecture Implementation
 
-### Inbound Ports
-Define how external actors interact with our application:
-- Task Processing Interface
-- Store Operations Interface
+Our implementation follows the hexagonal (ports and adapters) pattern, isolating the domain core from external concerns:
 
-### Outbound Ports
-Define how our application interacts with external services:
-- Scraper Interface
-- HTTP Client Interface
-- Caching Interface
-- Logging Interface
-- Event Handling Interface
-  - Event dispatch and subscription
-  - Metrics collection
-  - System monitoring
+```mermaid
+graph TB
+    subgraph "Domain Core"
+        direction TB
+        Models[Domain Models]
+        Services[Domain Services]
+        Ports[Port Interfaces]
+        Events[Domain Events]
+    end
 
-## 🛠️ Implementation Details
+    subgraph "Inbound Adapters"
+        direction TB
+        REST[REST API]
+        CLI[CLI Interface]
+        TaskProcessor[Task Processor]
+        -->|Implements| InPorts[Inbound Ports]
+    end
 
-### Domain Layer
-- Pure business logic isolated from external concerns
-- No dependencies on external frameworks or libraries
-- Domain models and business rules
-- Event definitions and handling
-  - Domain events for system state changes
-  - Event handler interfaces
-  - Event-driven metrics collection
+    subgraph "Outbound Adapters"
+        direction TB
+        OutPorts[Outbound Ports] -->|Implemented by|Implementations
+        subgraph "Implementations"
+            direction TB
+            Scrapers[Store Scrapers]
+            Cache[Redis Cache]
+            DB[MongoDB]
+            Queue[RabbitMQ]
+            Logger[Logger]
+            Metrics[Metrics]
+        end
+    end
 
-### Adapters Layer
-- **Inbound**:
-  - REST API using modern web frameworks
-  - Task processing for background jobs
-  
-- **Outbound**:
-  - Store-specific scrapers (Bricodepot, Bauhaus)
-  - Redis caching implementation
-  - HTTP client with Zyte integration
-  - Event System:
-    - In-memory event processing
-    - Metrics tracking (searches, products, cache, jobs)
-    - Store-specific performance monitoring
-    - Failure and error tracking
-  - Metrics and monitoring
+    %% Core Connections
+    InPorts -->|Uses| Models
+    Models -->|Used by| Services
+    Services -->|Uses| Ports
+    Services -->|Emits| Events
+    Events -->|Handled by| Services
+
+    %% Port Connections
+    Ports -->|Defines| OutPorts
+    InPorts -->|Uses| Services
+
+    classDef core fill:#f9f,stroke:#333,stroke-width:2px
+    classDef inbound fill:#9f9,stroke:#333,stroke-width:2px
+    classDef outbound fill:#ff9,stroke:#333,stroke-width:2px
+    
+    class Models,Services,Ports,Events core
+    class REST,CLI,TaskProcessor,InPorts inbound
+    class OutPorts,Scrapers,Cache,DB,Queue,Logger,Metrics outbound
+```
+
+The hexagonal architecture ensures:
+- Domain logic is isolated from external concerns
+- Dependencies point inward toward the domain core
+- Adapters implement ports for external communication
+- Easy testing through port interfaces
+- Flexible infrastructure switching without core changes
+
+### Port Interactions & Data Flow
+
+```mermaid
+graph TB
+    subgraph "External World"
+        Client[Client]
+        Zyte[Zyte Network]
+    end
+
+    subgraph "Inbound Ports & Adapters"
+        REST[REST Controller]
+        TaskProc[Task Processor]
+        REST & TaskProc -->|Implements| SearchPort[Search Port]
+        REST & TaskProc -->|Implements| TaskPort[Task Management Port]
+    end
+
+    subgraph "Domain Core"
+        direction TB
+        SearchService[Search Service]
+        TaskService[Task Service]
+        ProductModel[Product Model]
+        StoreModel[Store Model]
+        DomainEvents[Domain Events]
+    end
+
+    subgraph "Outbound Ports & Adapters"
+        direction TB
+        subgraph "Port Interfaces"
+            ScraperPort[Scraper Port]
+            CachePort[Cache Port]
+            QueuePort[Queue Port]
+            EventPort[Event Port]
+            LogPort[Logger Port]
+        end
+        
+        subgraph "Implementations"
+            BricoScraper[Bricodepot Scraper]
+            BauhausScraper[Bauhaus Scraper]
+            RedisAdapter[Redis Adapter]
+            RMQAdapter[RabbitMQ Adapter]
+            EventHandler[Event Handler]
+            Logger[Logger]
+        end
+    end
+
+    %% Inbound Flow
+    Client -->|HTTP Request| REST
+    SearchPort -->|Uses| SearchService
+    TaskPort -->|Uses| TaskService
+
+    %% Domain Flow
+    SearchService -->|Creates| ProductModel
+    SearchService -->|Uses| StoreModel
+    SearchService -->|Emits| DomainEvents
+    TaskService -->|Manages| ProductModel
+    TaskService -->|Emits| DomainEvents
+
+    %% Outbound Flow
+    SearchService -->|Uses| ScraperPort
+    SearchService -->|Uses| CachePort
+    TaskService -->|Uses| QueuePort
+    DomainEvents -->|Through| EventPort
+
+    %% Implementation Connections
+    ScraperPort -.->|Implemented by| BricoScraper & BauhausScraper
+    CachePort -.->|Implemented by| RedisAdapter
+    QueuePort -.->|Implemented by| RMQAdapter
+    EventPort -.->|Implemented by| EventHandler
+    LogPort -.->|Implemented by| Logger
+
+    %% External Connections
+    BricoScraper & BauhausScraper -->|Uses| Zyte
+
+    classDef external fill:#f9f,stroke:#333,stroke-width:2px
+    classDef port fill:#9f9,stroke:#333,stroke-width:2px
+    classDef core fill:#ff9,stroke:#333,stroke-width:2px
+    classDef impl fill:#99f,stroke:#333,stroke-width:2px
+
+    class Client,Zyte external
+    class SearchPort,TaskPort,ScraperPort,CachePort,QueuePort,EventPort,LogPort port
+    class SearchService,TaskService,ProductModel,StoreModel,DomainEvents core
+    class BricoScraper,BauhausScraper,RedisAdapter,RMQAdapter,EventHandler,Logger impl
+```
+
+This diagram illustrates:
+
+1. **Inbound Flow**:
+   - Client requests enter through REST or Task Processor adapters
+   - Adapters implement inbound ports (Search, Task Management)
+   - Ports delegate to domain services
+
+2. **Domain Core**:
+   - Services contain business logic
+   - Models represent domain entities
+   - Events handle domain state changes
+
+3. **Outbound Flow**:
+   - Services use outbound ports for external operations
+   - Each port has specific adapters implementing it
+   - Adapters interact with external services
+
+4. **Port Implementation**:
+   - Clear separation between port interfaces and implementations
+   - Multiple implementations possible for each port
+   - External services accessed only through adapters
 
 ## 🧪 Testing Strategy
 
@@ -352,172 +476,3 @@ We welcome contributions! Please follow these steps:
 ## 📝 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## 🏗️ Hexagonal Architecture Implementation
-
-Our implementation follows the hexagonal (ports and adapters) pattern, isolating the domain core from external concerns:
-
-```mermaid
-graph TB
-    subgraph "Domain Core"
-        direction TB
-        Models[Domain Models]
-        Services[Domain Services]
-        Ports[Port Interfaces]
-        Events[Domain Events]
-    end
-
-    subgraph "Inbound Adapters"
-        direction TB
-        REST[REST API]
-        CLI[CLI Interface]
-        TaskProcessor[Task Processor]
-        -->|Implements| InPorts[Inbound Ports]
-    end
-
-    subgraph "Outbound Adapters"
-        direction TB
-        OutPorts[Outbound Ports] -->|Implemented by|Implementations
-        subgraph "Implementations"
-            direction TB
-            Scrapers[Store Scrapers]
-            Cache[Redis Cache]
-            DB[MongoDB]
-            Queue[RabbitMQ]
-            Logger[Logger]
-            Metrics[Metrics]
-        end
-    end
-
-    %% Core Connections
-    InPorts -->|Uses| Models
-    Models -->|Used by| Services
-    Services -->|Uses| Ports
-    Services -->|Emits| Events
-    Events -->|Handled by| Services
-
-    %% Port Connections
-    Ports -->|Defines| OutPorts
-    InPorts -->|Uses| Services
-
-    classDef core fill:#f9f,stroke:#333,stroke-width:2px
-    classDef inbound fill:#9f9,stroke:#333,stroke-width:2px
-    classDef outbound fill:#ff9,stroke:#333,stroke-width:2px
-    
-    class Models,Services,Ports,Events core
-    class REST,CLI,TaskProcessor,InPorts inbound
-    class OutPorts,Scrapers,Cache,DB,Queue,Logger,Metrics outbound
-```
-
-The hexagonal architecture ensures:
-- Domain logic is isolated from external concerns
-- Dependencies point inward toward the domain core
-- Adapters implement ports for external communication
-- Easy testing through port interfaces
-- Flexible infrastructure switching without core changes
-
-## 🔌 Port Interactions & Data Flow
-
-```mermaid
-graph TB
-    subgraph "External World"
-        Client[Client]
-        Zyte[Zyte Network]
-    end
-
-    subgraph "Inbound Ports & Adapters"
-        REST[REST Controller]
-        TaskProc[Task Processor]
-        REST & TaskProc -->|Implements| SearchPort[Search Port]
-        REST & TaskProc -->|Implements| TaskPort[Task Management Port]
-    end
-
-    subgraph "Domain Core"
-        direction TB
-        SearchService[Search Service]
-        TaskService[Task Service]
-        ProductModel[Product Model]
-        StoreModel[Store Model]
-        DomainEvents[Domain Events]
-    end
-
-    subgraph "Outbound Ports & Adapters"
-        direction TB
-        subgraph "Port Interfaces"
-            ScraperPort[Scraper Port]
-            CachePort[Cache Port]
-            QueuePort[Queue Port]
-            EventPort[Event Port]
-            LogPort[Logger Port]
-        end
-        
-        subgraph "Implementations"
-            BricoScraper[Bricodepot Scraper]
-            BauhausScraper[Bauhaus Scraper]
-            RedisAdapter[Redis Adapter]
-            RMQAdapter[RabbitMQ Adapter]
-            EventHandler[Event Handler]
-            Logger[Logger]
-        end
-    end
-
-    %% Inbound Flow
-    Client -->|HTTP Request| REST
-    SearchPort -->|Uses| SearchService
-    TaskPort -->|Uses| TaskService
-
-    %% Domain Flow
-    SearchService -->|Creates| ProductModel
-    SearchService -->|Uses| StoreModel
-    SearchService -->|Emits| DomainEvents
-    TaskService -->|Manages| ProductModel
-    TaskService -->|Emits| DomainEvents
-
-    %% Outbound Flow
-    SearchService -->|Uses| ScraperPort
-    SearchService -->|Uses| CachePort
-    TaskService -->|Uses| QueuePort
-    DomainEvents -->|Through| EventPort
-
-    %% Implementation Connections
-    ScraperPort -.->|Implemented by| BricoScraper & BauhausScraper
-    CachePort -.->|Implemented by| RedisAdapter
-    QueuePort -.->|Implemented by| RMQAdapter
-    EventPort -.->|Implemented by| EventHandler
-    LogPort -.->|Implemented by| Logger
-
-    %% External Connections
-    BricoScraper & BauhausScraper -->|Uses| Zyte
-
-    classDef external fill:#f9f,stroke:#333,stroke-width:2px
-    classDef port fill:#9f9,stroke:#333,stroke-width:2px
-    classDef core fill:#ff9,stroke:#333,stroke-width:2px
-    classDef impl fill:#99f,stroke:#333,stroke-width:2px
-
-    class Client,Zyte external
-    class SearchPort,TaskPort,ScraperPort,CachePort,QueuePort,EventPort,LogPort port
-    class SearchService,TaskService,ProductModel,StoreModel,DomainEvents core
-    class BricoScraper,BauhausScraper,RedisAdapter,RMQAdapter,EventHandler,Logger impl
-```
-
-This diagram illustrates:
-
-1. **Inbound Flow**:
-   - Client requests enter through REST or Task Processor adapters
-   - Adapters implement inbound ports (Search, Task Management)
-   - Ports delegate to domain services
-
-2. **Domain Core**:
-   - Services contain business logic
-   - Models represent domain entities
-   - Events handle domain state changes
-
-3. **Outbound Flow**:
-   - Services use outbound ports for external operations
-   - Each port has specific adapters implementing it
-   - Adapters interact with external services
-
-4. **Port Implementation**:
-   - Clear separation between port interfaces and implementations
-   - Multiple implementations possible for each port
-   - External services accessed only through adapters
