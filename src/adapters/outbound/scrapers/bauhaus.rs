@@ -169,8 +169,14 @@ impl ScraperPort for BauhausScraper {
     }
 
     async fn scrape_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
+        let num_products = limit.unwrap_or(100);
         let encoded_query = urlencoding::encode(query);
-        let search_url = format!("{}?q={}", self.search_url, encoded_query);
+        let search_url = format!(
+            "{}?text={}&user_search=true&shownProducts={}",
+            self.search_url,
+            encoded_query,
+            num_products
+        );
         info!("Fetching products from URL: {}", search_url);
         
         let html = self.fetch_search_results(&search_url).await?;
@@ -180,8 +186,8 @@ impl ScraperPort for BauhausScraper {
         let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
         info!("Found {} product cards", product_cards.len());
 
-        for card in product_cards.iter().take(limit.unwrap_or(100)) {
-            if let Some(product) = self.extract_product_info(card) {
+        for card in product_cards {
+            if let Some(product) = self.extract_product_info(&card) {
                 debug!("Successfully extracted product: {}", product.name());
                 products.push(product);
             } else {
