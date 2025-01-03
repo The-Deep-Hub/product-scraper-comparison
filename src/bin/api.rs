@@ -18,6 +18,9 @@ use rust_scraper::{
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    // Load .env file first
+    dotenv::dotenv().ok();
+
     // Initialize tracing with better configuration
     fmt()
         .with_env_filter(

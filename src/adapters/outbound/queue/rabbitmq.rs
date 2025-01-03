@@ -203,41 +203,69 @@ impl QueuePort for RabbitMQAdapter {
             .basic_consume(
                 &queue_name,
                 &format!("consumer-{}", Uuid::new_v4()),
-                BasicConsumeOptions::default(),
+                BasicConsumeOptions {
+                    no_ack: false,
+                    ..BasicConsumeOptions::default()
+                },
                 FieldTable::default(),
             )
             .await
             .map_err(|e| DomainError::Queue(format!("Failed to create consumer: {}", e)))?;
 
+        info!("Started consuming messages from queue: {}", queue_name);
+
         while let Some(delivery_result) = consumer.next().await {
             match delivery_result {
                 Ok(delivery) => {
                     let payload = String::from_utf8_lossy(&delivery.data);
-                    let task: Task = serde_json::from_str(&payload)
-                        .map_err(|e| DomainError::Queue(format!("Failed to parse task: {}", e)))?;
+                    match serde_json::from_str::<Task>(&payload) {
+                        Ok(task) => {
+                            let scrape_task = ScrapeTask {
+                                query: task.query.clone(),
+                                store: store.clone(),
+                                num_products: task.num_products,
+                            };
 
-                    let scrape_task = ScrapeTask {
-                        query: task.query,
-                        store: store.clone(),
-                        num_products: task.num_products,
-                    };
+                            info!("Processing task - Store: {}, Query: {}", store, task.query);
 
-                    if let Err(e) = tx.send(scrape_task).await {
-                        error!("Failed to send task to processor: {}", e);
-                        return Err(DomainError::Queue(format!("Failed to send task to processor: {}", e)));
+                            match tx.send(scrape_task).await {
+                                Ok(_) => {
+                                    delivery.ack(BasicAckOptions::default())
+                                        .await
+                                        .map_err(|e| DomainError::Queue(format!("Failed to acknowledge message: {}", e)))?;
+                                    info!("Successfully processed task for query: {}", task.query);
+                                },
+                                Err(e) => {
+                                    error!("Failed to send task to processor: {}", e);
+                                    delivery.nack(BasicNackOptions {
+                                        requeue: true,
+                                        ..BasicNackOptions::default()
+                                    })
+                                    .await
+                                    .map_err(|e| DomainError::Queue(format!("Failed to nack message: {}", e)))?;
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            error!("Failed to parse task: {}", e);
+                            delivery.nack(BasicNackOptions {
+                                requeue: false, // Don't requeue malformed messages
+                                ..BasicNackOptions::default()
+                            })
+                            .await
+                            .map_err(|e| DomainError::Queue(format!("Failed to nack message: {}", e)))?;
+                        }
                     }
-
-                    delivery.ack(BasicAckOptions::default())
-                        .await
-                        .map_err(|e| DomainError::Queue(format!("Failed to acknowledge message: {}", e)))?;
                 }
                 Err(e) => {
                     error!("Error receiving message: {}", e);
-                    return Err(DomainError::Queue(format!("Failed to receive message: {}", e)));
+                    // Don't return error here, just log and continue
+                    continue;
                 }
             }
         }
 
+        info!("Stopped consuming messages from queue: {}", queue_name);
         Ok(())
     }
 } 
