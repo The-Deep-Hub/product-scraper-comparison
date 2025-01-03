@@ -3,6 +3,7 @@ use scraper::{Html, Selector};
 use serde_json::Value;
 use tracing::{debug, info, warn};
 use url::Url;
+use futures::future::join_all;
 
 use crate::domain::models::{Product, Store, DomainResult, DomainError};
 use crate::domain::ports::outbound::{ScraperPort, HttpClientPort};
@@ -10,6 +11,7 @@ use crate::domain::ports::outbound::{ScraperPort, HttpClientPort};
 const BASE_URL: &str = "https://www.leroymerlin.es";
 const SEARCH_URL: &str = "https://www.leroymerlin.es/search?q=";
 const BASE_IMAGE_URL: &str = "https://media.adeo.com/media/";
+const PRODUCTS_PER_PAGE: usize = 48;
 
 /// Leroy Merlin scraper implementation
 pub struct LeroyScraper {
@@ -128,6 +130,27 @@ impl LeroyScraper {
             Store::LeroyMerlin,
         ).ok()
     }
+
+    async fn scrape_page(&self, query: &str, page: usize) -> DomainResult<Vec<Product>> {
+        let search_url = format!("{}{}&p={}", self.search_url, query, page);
+        info!("Fetching products from URL: {}", search_url);
+        
+        let html = self.client.get(&search_url).await?;
+        let raw_products = self.extract_products_from_html(&html);
+        info!("Found {} raw products on page {}", raw_products.len(), page);
+
+        let mut products = Vec::new();
+        for product_data in raw_products.iter() {
+            if let Some(product) = self.parse_product(product_data) {
+                debug!("Successfully extracted product: {}", product.name());
+                products.push(product);
+            } else {
+                warn!("Failed to parse product data");
+            }
+        }
+        
+        Ok(products)
+    }
 }
 
 #[async_trait]
@@ -147,32 +170,33 @@ impl ScraperPort for LeroyScraper {
     }
 
     async fn scrape_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
-        // Use start and rows parameters for pagination
-        let search_url = format!("{}{}?start=0&rows=100", self.search_url, query);
-        info!("Fetching products from URL: {}", search_url);
+        let num_products = limit.unwrap_or(PRODUCTS_PER_PAGE);
+        let num_pages = (num_products as f64 / PRODUCTS_PER_PAGE as f64).ceil() as usize;
         
-        let html = self.client.get(&search_url).await?;
+        info!("Scraping {} pages for {} products", num_pages, num_products);
         
-        let raw_products = self.extract_products_from_html(&html);
-        info!("Found {} raw products", raw_products.len());
-
-        let mut products = Vec::new();
-        for product_data in raw_products.iter() {
-            if let Some(product) = self.parse_product(product_data) {
-                debug!("Successfully extracted product: {}", product.name());
-                products.push(product);
-            } else {
-                warn!("Failed to parse product data");
+        // Create a future for each page
+        let page_futures: Vec<_> = (1..=num_pages)
+            .map(|page| self.scrape_page(query, page))
+            .collect();
+        
+        // Execute all page scrapes in parallel
+        let results = join_all(page_futures).await;
+        
+        // Collect and flatten results
+        let mut all_products = Vec::new();
+        for result in results {
+            match result {
+                Ok(products) => all_products.extend(products),
+                Err(e) => warn!("Failed to scrape page: {}", e),
             }
         }
         
-        // Apply limit after collecting all products
-        if let Some(limit) = limit {
-            products.truncate(limit);
-        }
+        // Apply limit
+        all_products.truncate(num_products);
         
-        info!("Successfully extracted {} products", products.len());
-        Ok(products)
+        info!("Successfully extracted {} products", all_products.len());
+        Ok(all_products)
     }
 
     async fn get_product_details(&self, url: &str) -> DomainResult<Product> {
