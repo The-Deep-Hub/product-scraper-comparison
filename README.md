@@ -139,6 +139,89 @@ sequenceDiagram
 
 This project implements the Hexagonal Architecture pattern, also known as Ports and Adapters. The architecture is organized into three main layers:
 
+### Classic Hexagonal View
+```mermaid
+graph TD
+    subgraph External World
+        direction TB
+        subgraph Clients [External Clients]
+            UI[Web UI]
+            CLI[CLI]
+            API[API Consumers]
+        end
+        subgraph Infrastructure [External Infrastructure]
+            Zyte[Zyte Proxy]
+            Redis[Redis]
+            MongoDB[MongoDB]
+            RMQ[RabbitMQ]
+        end
+    end
+
+    subgraph Primary Ports [Primary/Driving Ports]
+        direction TB
+        REST[REST API Port]
+        Task[Task Port]
+        Search[Search Port]
+    end
+
+    subgraph Domain Core [Domain Core]
+        direction TB
+        Models[Domain Models]
+        Services[Business Logic]
+        Events[Domain Events]
+    end
+
+    subgraph Secondary Ports [Secondary/Driven Ports]
+        direction TB
+        ScraperP[Scraper Port]
+        CacheP[Cache Port]
+        DBP[DB Port]
+        QueueP[Queue Port]
+        LogP[Logger Port]
+    end
+
+    %% Connections
+    UI & CLI & API --> REST & Task & Search
+    REST & Task & Search --> Models & Services
+    Services --> ScraperP & CacheP & DBP & QueueP & LogP
+    ScraperP --> Zyte
+    CacheP --> Redis
+    DBP --> MongoDB
+    QueueP --> RMQ
+
+    %% Styling
+    classDef external fill:#f9f,stroke:#333,stroke-width:2px
+    classDef primary fill:#9f9,stroke:#333,stroke-width:2px
+    classDef core fill:#ff9,stroke:#333,stroke-width:2px
+    classDef secondary fill:#99f,stroke:#333,stroke-width:2px
+
+    class UI,CLI,API,Zyte,Redis,MongoDB,RMQ external
+    class REST,Task,Search primary
+    class Models,Services,Events core
+    class ScraperP,CacheP,DBP,QueueP,LogP secondary
+
+    %% Layout hints
+    linkStyle default stroke-width:2px
+```
+
+The hexagonal architecture divides the application into concentric layers:
+1. **Domain Core (Center)**
+   - Business logic and domain models
+   - Pure business rules
+   - No external dependencies
+
+2. **Ports (Inner Hexagon)**
+   - Primary (Driving) Ports: Define how external actors use our application
+   - Secondary (Driven) Ports: Define how our application uses external services
+
+3. **Adapters (Outer Hexagon)**
+   - Primary Adapters: Implement interfaces for external actors
+   - Secondary Adapters: Implement interfaces for external services
+
+4. **External World (Outside)**
+   - UI, API consumers, and external services
+   - Infrastructure components
+
 ### Core Domain (Business Logic)
 The heart of the application, located in `src/domain/`, contains:
 - **Models**: Core business entities and value objects
@@ -388,6 +471,35 @@ tests/
 - `validator`: Input validation
 - `regex`: Regular expressions
 - `anyhow`: Error handling
+
+## 🤝 Frontend Application
+
+The frontend is built with modern web technologies to provide a responsive and intuitive user interface:
+
+### Technology Stack
+- **Framework**: React with TypeScript
+- **State Management**: Redux Toolkit
+- **Styling**: Tailwind CSS
+- **API Integration**: Axios with custom request interceptors
+- **Real-time Updates**: WebSocket for live scraping status
+
+### Key Features
+- **Responsive Design**: Mobile-first approach
+- **Real-time Updates**: Live progress of scraping tasks
+- **Advanced Search**: Filters and sorting capabilities
+- **Product Comparison**: Side-by-side product comparison
+- **Dark/Light Mode**: Theme customization
+- **Authentication**: JWT-based auth with secure storage
+
+### Component Architecture
+- Atomic design pattern
+- Reusable UI components
+- Type-safe props and state
+- Lazy loading for optimal performance
+
+## 🏗️ Infrastructure
+
+The application infrastructure is managed using Infrastructure as Code (IaC) with Terraform. For detailed infrastructure documentation and setup, please refer to the [infrastructure documentation](./infrastructure/README.md).
 
 ## 🤝 Contributing
 
