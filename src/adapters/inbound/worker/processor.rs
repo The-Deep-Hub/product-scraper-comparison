@@ -1,6 +1,7 @@
 use crate::domain::{
     ports::outbound::{QueuePort, ScraperPort, EventPublisherPort},
     events::{DomainEvent, EventMetadata},
+    models::Store,
 };
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -9,9 +10,15 @@ use tokio::task::JoinSet;
 use tokio::time::sleep;
 use tracing::{info, error};
 
-const DEFAULT_LIMIT: Option<usize> = Some(100); // Default limit for product scraping
 const RECONNECT_DELAY: Duration = Duration::from_secs(5);
 const CHANNEL_BUFFER_SIZE: usize = 100;
+
+#[derive(Debug, Clone)]
+pub struct ScrapeTask {
+    pub query: String,
+    pub store: Store,
+    pub num_products: Option<usize>,
+}
 
 pub struct TaskProcessor {
     queue_port: Arc<dyn QueuePort>,
@@ -53,7 +60,7 @@ impl TaskProcessor {
         }
 
         // Process received messages
-        while let Some((query, store)) = rx.recv().await {
+        while let Some(task) = rx.recv().await {
             let scrapers = Arc::clone(&self.scrapers);
             let event_publisher = Arc::clone(&self.event_publisher);
 
@@ -64,8 +71,8 @@ impl TaskProcessor {
                 if let Err(e) = event_publisher
                     .publish(DomainEvent::JobStarted {
                         metadata: EventMetadata::new(),
-                        query: query.clone(),
-                        store: store.clone(),
+                        query: task.query.clone(),
+                        store: task.store.clone(),
                     })
                     .await
                 {
@@ -73,15 +80,15 @@ impl TaskProcessor {
                 }
 
                 // Find the appropriate scraper
-                let scraper = match scrapers.iter().find(|s| s.get_store() == store) {
+                let scraper = match scrapers.iter().find(|s| s.get_store() == task.store) {
                     Some(s) => s,
                     None => {
-                        error!("Scraper not found for store {}", store);
+                        error!("Scraper not found for store {}", task.store);
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::JobFailed {
                                 metadata: EventMetadata::new(),
-                                query,
-                                store,
+                                query: task.query,
+                                store: task.store,
                                 error: "Scraper not found for store".to_string(),
                             })
                             .await
@@ -93,13 +100,13 @@ impl TaskProcessor {
                 };
 
                 // Scrape products
-                match scraper.scrape_products(&query, DEFAULT_LIMIT).await {
+                match scraper.scrape_products(&task.query, task.num_products).await {
                     Ok(products) => {
                         info!(
                             "Found {} products for query '{}' in store {} (took {:?})",
                             products.len(),
-                            query,
-                            store,
+                            task.query,
+                            task.store,
                             start.elapsed()
                         );
 
@@ -107,9 +114,9 @@ impl TaskProcessor {
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::ProductsScraped {
                                 metadata: EventMetadata::new(),
-                                query: query.clone(),
+                                query: task.query.clone(),
                                 products: products.clone(),
-                                store: store.clone(),
+                                store: task.store.clone(),
                             })
                             .await
                         {
@@ -120,8 +127,8 @@ impl TaskProcessor {
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::JobCompleted {
                                 metadata: EventMetadata::new(),
-                                query,
-                                store,
+                                query: task.query,
+                                store: task.store,
                                 products_count: products.len(),
                             })
                             .await
@@ -132,15 +139,15 @@ impl TaskProcessor {
                     Err(e) => {
                         error!(
                             "Error scraping products for query '{}' in store {}: {}",
-                            query, store, e
+                            task.query, task.store, e
                         );
                         
                         // Emit JobFailed event
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::JobFailed {
                                 metadata: EventMetadata::new(),
-                                query,
-                                store,
+                                query: task.query,
+                                store: task.store,
                                 error: e.to_string(),
                             })
                             .await

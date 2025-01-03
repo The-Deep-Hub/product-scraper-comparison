@@ -80,7 +80,7 @@ where
                 match routes.cache_port.get_store_products(&request.query, &store).await {
                     Ok(products) if !products.is_empty() => {
                         info!("Cache hit for store {} with {} products", store_name, products.len());
-                        cached_products.extend(products);
+                        cached_products.extend(products.into_iter().take(request.num_products));
                         found_stores.push(store_name.clone());
                     },
                     _ => {
@@ -99,12 +99,10 @@ where
             info!("All stores found in cache, returning {} products", cached_products.len());
             let mut stores = std::collections::HashMap::new();
             for product in cached_products {
-                stores
-                    .entry(product.store().to_string().to_lowercase())
+                stores.entry(product.store().to_string())
                     .or_insert_with(Vec::new)
                     .push(product);
             }
-            
             return Ok(HttpResponse::Ok().json(TaskStatusResponse {
                 status: "completed".to_string(),
                 stores: Some(stores),
@@ -113,50 +111,34 @@ where
             }));
         }
         
-        // Create tasks only for stores that weren't in cache
-        let mut task_ids = Vec::new();
-        let main_task_id = Uuid::new_v4().to_string();
+        // Create a new task ID
+        let task_id = Uuid::new_v4().to_string();
         
-        // Log which stores were found in cache and which need scraping
-        if !found_stores.is_empty() {
+        // Store task data in cache
+        let task_data = format!(
+            "{}:{}",
+            missing_stores.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(","),
+            request.query
+        );
+        if let Err(e) = routes.cache_port.set_value(&format!("task_query:{}", task_id), &task_data, None).await {
+            error!("Failed to store task data: {}", e);
+            return Err(AppError::InternalServerError("Failed to store task data".into()));
+        }
+        
+        // Enqueue scraping tasks for missing stores
+        for (_, store) in &missing_stores {
+            if let Err(e) = routes.queue_port.enqueue_scrape_job(&task_id, &request.query, store.clone(), Some(request.num_products)).await {
+                error!("Failed to enqueue scraping task for store {}: {}", store, e);
+                return Err(AppError::InternalServerError("Failed to enqueue scraping tasks".into()));
+            }
+        }
+        
+        if !missing_stores.is_empty() {
             info!(
                 "Using cached results for stores: [{}], scraping for: [{}]",
                 found_stores.join(", "),
                 missing_stores.iter().map(|(name, _)| name.as_str()).collect::<Vec<_>>().join(", ")
             );
-        }
-        
-        // Store all stores and query mapping for the main task
-        let task_key = format!("task_query:{}", main_task_id);
-        let stores_list = missing_stores.iter()
-            .map(|(name, _)| name.to_string())
-            .collect::<Vec<_>>()
-            .join(",");
-        let task_data = format!("{}:{}", stores_list, request.query);
-        if let Err(e) = routes.cache_port.set_value(&task_key, &task_data, Some(300)).await {
-            error!("Failed to store task query mapping: {}", e);
-        }
-        
-        for (store_name, store) in missing_stores {
-            match routes.queue_port.enqueue_store_scrape_job(&request.query, &store).await {
-                Ok(()) => {
-                    let task_id = Uuid::new_v4().to_string();
-                    task_ids.push(task_id.clone());
-                    
-                    // Store subtask mapping
-                    let subtask_key = format!("subtask:{}:{}", main_task_id, store_name);
-                    let subtask_data = format!("{}:{}", store_name, request.query);
-                    if let Err(e) = routes.cache_port.set_value(&subtask_key, &subtask_data, Some(300)).await {
-                        error!("Failed to store subtask mapping: {}", e);
-                    }
-                    
-                    info!("Created subtask {} for store {} and query: {}", task_id, store_name, request.query);
-                },
-                Err(e) => {
-                    error!("Failed to create search task for store {}: {}", store_name, e);
-                    return Err(AppError::InternalServerError(format!("Failed to create search task for store {}: {}", store_name, e)));
-                }
-            }
         }
         
         // If we have some cached results and some pending tasks
@@ -170,20 +152,20 @@ where
             }
             
             Ok(HttpResponse::Accepted().json(SearchResponse {
-                task_id: main_task_id,
+                task_id: task_id,
                 status: "partial_content".to_string(),
                 message: format!(
                     "Found cached results for [{}]. Created {} tasks for remaining stores. Check status using the task ID.",
                     found_stores.join(", "),
-                    task_ids.len()
+                    missing_stores.len()
                 ),
             }))
         } else {
             // If all stores need to be scraped
             Ok(HttpResponse::Accepted().json(SearchResponse {
-                task_id: main_task_id,
+                task_id: task_id,
                 status: "processing".to_string(),
-                message: format!("Created {} tasks for processing. Check status using the task ID.", task_ids.len()),
+                message: format!("Created {} tasks for processing. Check status using the task ID.", missing_stores.len()),
             }))
         }
     }

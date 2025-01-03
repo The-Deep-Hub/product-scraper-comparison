@@ -48,11 +48,12 @@ impl ProductSearchService {
             .cloned()
     }
 
-    async fn enqueue_background_scrape(&self, query: &str, store: Option<Store>) -> Result<(), DomainError> {
+    async fn enqueue_background_scrape(&self, query: &str, store: Option<Store>, num_products: usize) -> Result<(), DomainError> {
         let job = ScrapeJob {
             query: query.to_string(),
             store,
             priority: JobPriority::Normal,
+            num_products: Some(num_products),
         };
         self.queue.enqueue_job(job).await
     }
@@ -60,7 +61,7 @@ impl ProductSearchService {
 
 #[async_trait]
 impl ProductSearchPort for ProductSearchService {
-    async fn search_products(&self, query: &str) -> Result<Vec<Product>, DomainError> {
+    async fn search_products(&self, query: &str, num_products: usize) -> Result<Vec<Product>, DomainError> {
         // Try to get from cache first
         if let Ok(Some(products)) = self.cache.get_products(query).await {
             info!("Found {} products in cache for query: {}", products.len(), query);
@@ -68,14 +69,14 @@ impl ProductSearchPort for ProductSearchService {
         }
 
         // Enqueue background job to refresh cache
-        if let Err(e) = self.enqueue_background_scrape(query, None).await {
+        if let Err(e) = self.enqueue_background_scrape(query, None, num_products).await {
             warn!("Failed to enqueue background scrape: {}", e);
         }
 
         // Perform immediate scrape
         let mut all_products = Vec::new();
         for scraper in &self.scrapers {
-            match scraper.scrape_products(query, Some(10)).await {
+            match scraper.scrape_products(query, Some(num_products)).await {
                 Ok(products) => {
                     info!(
                         "Found {} products from {} for query: {}",
@@ -105,7 +106,7 @@ impl ProductSearchPort for ProductSearchService {
         Ok(all_products)
     }
 
-    async fn search_store_products(&self, store: Store, query: &str) -> Result<Vec<Product>, DomainError> {
+    async fn search_store_products(&self, store: Store, query: &str, num_products: usize) -> Result<Vec<Product>, DomainError> {
         // Try to get from cache first
         if let Ok(Some(products)) = self.cache.get_products(query).await {
             let store_products: Vec<Product> = products
@@ -121,7 +122,7 @@ impl ProductSearchPort for ProductSearchService {
         }
 
         // Enqueue background job to refresh cache
-        if let Err(e) = self.enqueue_background_scrape(query, Some(store)).await {
+        if let Err(e) = self.enqueue_background_scrape(query, Some(store), num_products).await {
             warn!("Failed to enqueue background scrape: {}", e);
         }
 
@@ -130,7 +131,7 @@ impl ProductSearchPort for ProductSearchService {
             .ok_or_else(|| DomainError::not_found(format!("No scraper found for store: {}", store)))?;
 
         // Perform immediate scrape
-        let products = scraper.scrape_products(query, Some(10)).await?;
+        let products = scraper.scrape_products(query, Some(num_products)).await?;
         
         // Cache results
         if !products.is_empty() {

@@ -2,7 +2,6 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures::StreamExt;
-use futures_util::TryStreamExt;
 use lapin::{
     options::*, types::{FieldTable, AMQPValue}, BasicProperties,
     Connection, ConnectionProperties, Channel,
@@ -12,9 +11,12 @@ use tokio::sync::mpsc;
 use tracing::{info, error};
 use uuid::Uuid;
 
-use crate::domain::{
-    models::{DomainError, Store, DomainResult},
-    ports::outbound::QueuePort,
+use crate::{
+    domain::{
+        models::{DomainError, Store, DomainResult},
+        ports::outbound::QueuePort,
+    },
+    adapters::inbound::worker::processor::ScrapeTask,
 };
 
 const MESSAGE_TTL: i32 = 300000; // 5 minutes in milliseconds
@@ -25,6 +27,7 @@ pub struct Task {
     pub id: String,
     pub query: String,
     pub store: Option<Store>,
+    pub num_products: Option<usize>,
     pub created_at: chrono::DateTime<Utc>,
     pub updated_at: chrono::DateTime<Utc>,
 }
@@ -130,11 +133,12 @@ impl RabbitMQAdapter {
 
 #[async_trait]
 impl QueuePort for RabbitMQAdapter {
-    async fn enqueue_scrape_job(&self, query: &str) -> DomainResult<()> {
+    async fn enqueue_scrape_job(&self, task_id: &str, query: &str, store: Store, num_products: Option<usize>) -> DomainResult<()> {
         let task = Task {
-            id: Uuid::new_v4().to_string(),
+            id: task_id.to_string(),
             query: query.to_string(),
-            store: None,
+            store: Some(store),
+            num_products,
             created_at: Utc::now(),
             updated_at: Utc::now(),
         };
@@ -142,27 +146,50 @@ impl QueuePort for RabbitMQAdapter {
         self.publish_task(task).await
     }
 
-    async fn enqueue_store_scrape_job(&self, query: &str, store: &Store) -> DomainResult<()> {
-        let task = Task {
-            id: Uuid::new_v4().to_string(),
-            query: query.to_string(),
-            store: Some(store.clone()),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
-        };
-
-        self.publish_task(task).await
+    async fn process_scrape_job(&self, query: &str, num_products: Option<usize>) -> DomainResult<()> {
+        // For all-stores case, we just enqueue the job for each store
+        for store in &[Store::LeroyMerlin, Store::Bauhaus, Store::Bricodepot] {
+            let task_id = Uuid::new_v4().to_string();
+            self.enqueue_scrape_job(&task_id, query, store.clone(), num_products).await?;
+        }
+        Ok(())
     }
 
-    async fn process_scrape_job(&self, query: &str) -> DomainResult<()> {
-        // For all-stores case, we just enqueue the job
-        self.enqueue_scrape_job(query).await
-    }
+    async fn process_store_scrape_job(&self, query: &str, store: &Store, _num_products: Option<usize>) -> DomainResult<Option<String>> {
+        let queue_name = self.get_store_queue_name(store);
+        let mut consumer = self.channel
+            .basic_consume(
+                &queue_name,
+                &format!("consumer-{}", Uuid::new_v4()),
+                BasicConsumeOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .map_err(|e| DomainError::Queue(format!("Failed to create consumer: {}", e)))?;
 
-    async fn process_store_scrape_job(&self, query: &str, store: &Store) -> DomainResult<Option<String>> {
-        // Enqueue the job for a specific store
-        self.enqueue_store_scrape_job(query, store).await?;
-        Ok(Some(query.to_string()))
+        while let Some(delivery_result) = consumer.next().await {
+            match delivery_result {
+                Ok(delivery) => {
+                    let payload = String::from_utf8_lossy(&delivery.data);
+                    let task: Task = serde_json::from_str(&payload)
+                        .map_err(|e| DomainError::Queue(format!("Failed to parse task: {}", e)))?;
+
+                    if task.query == query {
+                        delivery.ack(BasicAckOptions::default())
+                            .await
+                            .map_err(|e| DomainError::Queue(format!("Failed to acknowledge message: {}", e)))?;
+
+                        return Ok(Some(task.query));
+                    }
+                }
+                Err(e) => {
+                    error!("Error receiving message: {}", e);
+                    return Err(DomainError::Queue(format!("Failed to receive message: {}", e)));
+                }
+            }
+        }
+
+        Ok(None)
     }
 
     async fn get_value(&self, _key: &str) -> DomainResult<Option<String>> {
@@ -170,41 +197,43 @@ impl QueuePort for RabbitMQAdapter {
         Ok(None)
     }
 
-    async fn consume_messages(&self, store: &Store, tx: mpsc::Sender<(String, Store)>) -> DomainResult<()> {
+    async fn consume_messages(&self, store: &Store, tx: mpsc::Sender<ScrapeTask>) -> DomainResult<()> {
         let queue_name = self.get_store_queue_name(store);
-        info!("Starting consumer for store {} on queue {}", store, queue_name);
-        
-        let consumer = self.channel.basic_consume(
-            &queue_name,
-            &format!("scraper_consumer_{}", store),
-            BasicConsumeOptions::default(),
-            FieldTable::default(),
-        ).await.map_err(|e| DomainError::Queue(format!("Failed to create consumer: {}", e)))?;
+        let mut consumer = self.channel
+            .basic_consume(
+                &queue_name,
+                &format!("consumer-{}", Uuid::new_v4()),
+                BasicConsumeOptions::default(),
+                FieldTable::default(),
+            )
+            .await
+            .map_err(|e| DomainError::Queue(format!("Failed to create consumer: {}", e)))?;
 
-        let mut consumer_stream = consumer.into_stream();
-
-        while let Some(delivery) = consumer_stream.next().await {
-            match delivery {
+        while let Some(delivery_result) = consumer.next().await {
+            match delivery_result {
                 Ok(delivery) => {
-                    let task: Task = match serde_json::from_slice(&delivery.data) {
-                        Ok(task) => task,
-                        Err(e) => {
-                            error!("Failed to deserialize task: {}", e);
-                            delivery.ack(BasicAckOptions::default()).await
-                                .map_err(|e| DomainError::Queue(format!("Failed to ack message: {}", e)))?;
-                            continue;
-                        }
+                    let payload = String::from_utf8_lossy(&delivery.data);
+                    let task: Task = serde_json::from_str(&payload)
+                        .map_err(|e| DomainError::Queue(format!("Failed to parse task: {}", e)))?;
+
+                    let scrape_task = ScrapeTask {
+                        query: task.query,
+                        store: store.clone(),
+                        num_products: task.num_products,
                     };
 
-                    if let Err(e) = tx.send((task.query, store.clone())).await {
+                    if let Err(e) = tx.send(scrape_task).await {
                         error!("Failed to send task to processor: {}", e);
+                        return Err(DomainError::Queue(format!("Failed to send task to processor: {}", e)));
                     }
 
-                    delivery.ack(BasicAckOptions::default()).await
-                        .map_err(|e| DomainError::Queue(format!("Failed to ack message: {}", e)))?;
+                    delivery.ack(BasicAckOptions::default())
+                        .await
+                        .map_err(|e| DomainError::Queue(format!("Failed to acknowledge message: {}", e)))?;
                 }
                 Err(e) => {
-                    error!("Failed to receive message: {}", e);
+                    error!("Error receiving message: {}", e);
+                    return Err(DomainError::Queue(format!("Failed to receive message: {}", e)));
                 }
             }
         }

@@ -7,6 +7,12 @@ use crate::domain::models::{Product};
 pub struct SearchRequest {
     pub query: String,
     pub stores: Vec<String>,
+    #[serde(default = "default_num_products")]
+    pub num_products: usize,
+}
+
+fn default_num_products() -> usize {
+    100
 }
 
 #[derive(Debug, Serialize)]

@@ -189,17 +189,17 @@ impl ScraperPort for BricodepotScraper {
     }
 
     async fn scrape_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
-        info!("Searching for '{}' products on Bricodepot", query);
         let search_url = format!("{}{}", self.search_url, query);
+        info!("Fetching products from URL: {}", search_url);
+        
         let html = self.fetch_search_results(&search_url).await?;
-        
         let document = Html::parse_document(&html);
-        let mut products = Vec::new();
         
+        let mut products = Vec::new();
         let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
         info!("Found {} product cards", product_cards.len());
 
-        for card in product_cards.iter().take(limit.unwrap_or(10)) {
+        for card in product_cards.iter().take(limit.unwrap_or(100)) {
             if let Some(product) = self.extract_product_info(card) {
                 debug!("Successfully extracted product: {}", product.name());
                 products.push(product);

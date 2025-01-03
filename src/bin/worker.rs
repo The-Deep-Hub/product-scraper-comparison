@@ -15,6 +15,7 @@ use rust_scraper::{
                 handlers::ProductCacheHandler,
             },
         },
+        inbound::worker::processor::ScrapeTask,
     },
     domain::{
         services::scraper::ScraperService,
@@ -109,7 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Scraper service initialized");
 
     // Create channel for worker communication
-    let (tx, mut rx) = mpsc::channel::<(String, Store)>(100);
+    let (tx, mut rx) = mpsc::channel::<ScrapeTask>(100);
     info!("Communication channel created");
 
     // Start consumers for each store
@@ -131,55 +132,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Worker ready to process tasks");
     loop {
         tokio::select! {
-            Some((query, store)) = rx.recv() => {
-                info!("Received task - Store: {}, Query: {}", store, query);
-                match scraper_service.scrape_store_products(store, &query, None).await {
+            Some(task) = rx.recv() => {
+                info!("Received task - Store: {}, Query: {}", task.store, task.query);
+                match scraper_service.scrape_store_products(task.store, &task.query, task.num_products).await {
                     Ok(products) => {
-                        info!("Successfully scraped {} products for store {} with query: {}", products.len(), store, query);
+                        info!("Successfully scraped {} products for store {} with query: {}", products.len(), task.store, task.query);
                         
                         // Cache the products for this store
-                        if let Err(e) = cache_adapter.cache_store_products(&query, &store, &products).await {
-                            error!("Failed to cache products for store {}: {}", store, e);
+                        if let Err(e) = cache_adapter.cache_store_products(&task.query, &task.store, &products).await {
+                            error!("Failed to cache products for store {}: {}", task.store, e);
                         } else {
-                            info!("Successfully cached {} products for store {} with query: {}", products.len(), store, query);
+                            info!("Successfully cached {} products for store {} with query: {}", products.len(), task.store, task.query);
                         }
 
                         // Emit ProductsScraped event
                         if let Err(e) = event_publisher
                             .publish(DomainEvent::ProductsScraped {
                                 metadata: EventMetadata::new(),
-                                query: query.clone(),
-                                products,
-                                store: store.clone(),
+                                query: task.query.clone(),
+                                products: products.clone(),
+                                store: task.store.clone(),
                             })
                             .await
                         {
                             error!("Failed to publish ProductsScraped event: {}", e);
                         }
-
-                        info!("Successfully processed task for store {} with query: {}", store, query);
-                    },
+                    }
                     Err(e) => {
-                        error!("Failed to process task: {}", e);
-                        
-                        // Emit ScrapingFailed event
-                        if let Err(e) = event_publisher
-                            .publish(DomainEvent::ScrapingFailed {
-                                metadata: EventMetadata::new(),
-                                query,
-                                store,
-                                error: e.to_string(),
-                            })
-                            .await
-                        {
-                            error!("Failed to publish ScrapingFailed event: {}", e);
-                        }
+                        error!("Failed to scrape products for store {} with query {}: {}", task.store, task.query, e);
                     }
                 }
-            }
-            else => {
-                warn!("Channel closed, shutting down worker");
-                break;
             }
         }
     }

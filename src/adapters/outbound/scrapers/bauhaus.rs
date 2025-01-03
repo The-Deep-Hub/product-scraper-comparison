@@ -169,37 +169,27 @@ impl ScraperPort for BauhausScraper {
     }
 
     async fn scrape_products(&self, query: &str, limit: Option<usize>) -> DomainResult<Vec<Product>> {
-        let search_url = format!("{}?text={}&user_search=true", self.search_url, urlencoding::encode(query));
-        info!("Fetching Bauhaus products from URL: {}", search_url);
+        let encoded_query = urlencoding::encode(query);
+        let search_url = format!("{}?q={}", self.search_url, encoded_query);
+        info!("Fetching products from URL: {}", search_url);
         
         let html = self.fetch_search_results(&search_url).await?;
-        debug!("Received HTML content length: {}", html.len());
-        
         let document = Html::parse_document(&html);
         
-        // Log all unique class names to help debug selectors
-        let mut unique_classes = std::collections::HashSet::new();
-        for element in document.select(&Selector::parse("[class]").unwrap()) {
-            if let Some(classes) = element.value().attr("class") {
-                for class in classes.split_whitespace() {
-                    unique_classes.insert(class.to_string());
-                }
-            }
-        }
-        debug!("Found classes on page: {:?}", unique_classes);
-        
-        let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
-        info!("Found {} product cards on the page", product_cards.len());
-        
         let mut products = Vec::new();
-        for card in product_cards.into_iter().take(limit.unwrap_or(10)) {
-            if let Some(product) = self.extract_product_info(&card) {
-                info!("Successfully extracted product: {}", product.name());
+        let product_cards: Vec<_> = document.select(&self.selectors.product_card).collect();
+        info!("Found {} product cards", product_cards.len());
+
+        for card in product_cards.iter().take(limit.unwrap_or(100)) {
+            if let Some(product) = self.extract_product_info(card) {
+                debug!("Successfully extracted product: {}", product.name());
                 products.push(product);
+            } else {
+                warn!("Failed to extract product info from card");
             }
         }
         
-        info!("Successfully extracted {} products from Bauhaus", products.len());
+        info!("Successfully extracted {} products", products.len());
         Ok(products)
     }
 

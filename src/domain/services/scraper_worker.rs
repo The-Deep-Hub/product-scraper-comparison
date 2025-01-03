@@ -58,7 +58,7 @@ impl ScraperWorkerService {
 
                     let mut all_products = Vec::new();
                     for scraper in scrapers {
-                        match scraper.scrape_products(&job.query, None).await {
+                        match scraper.scrape_products(&job.query, job.num_products).await {
                             Ok(products) => {
                                 info!(
                                     "Found {} products from {} for query: {}",
