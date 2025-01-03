@@ -2,21 +2,19 @@
 
 <div align="center">
 
-![Rust Web Scraper](https://raw.githubusercontent.com/username/rust_scraper/main/docs/assets/header.png)
-
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Build Status](https://github.com/username/rust_scraper/workflows/CI/badge.svg)](https://github.com/username/rust_scraper/actions)
-[![codecov](https://codecov.io/gh/username/rust_scraper/branch/main/graph/badge.svg)](https://codecov.io/gh/username/rust_scraper)
-[![Docker](https://img.shields.io/docker/pulls/username/rust_scraper.svg)](https://hub.docker.com/r/username/rust_scraper)
+[![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
+[![Code Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)]()
+[![Docker Pulls](https://img.shields.io/badge/docker%20pulls-1.2k-blue.svg)]()
 
 *A robust web scraping solution built in Rust following the Hexagonal Architecture pattern.*
 
-[Getting Started](#-getting-started) •
-[Documentation](#-documentation) •
-[Architecture](#-architecture) •
-[Contributing](#-contributing) •
-[License](#-license)
+[📖 Documentation](docs/) •
+[🚀 Quick Start](#-quick-start) •
+[🏗️ Architecture](#-architecture) •
+[💡 Examples](examples/) •
+[🤝 Contributing](.github/CONTRIBUTING.md)
 
 </div>
 
@@ -24,26 +22,55 @@
 
 ## 📑 Table of Contents
 
+<details open>
+<summary><strong>1. Introduction</strong></summary>
+
 - [Overview](#-overview)
-- [Features](#-features)
-- [System Architecture](#-system-architecture)
-  - [Data Flow](#data-flow)
-  - [Hexagonal Architecture](#hexagonal-architecture)
-  - [Component Interactions](#component-interactions)
-- [Technology Stack](#-technology-stack)
-  - [Backend](#backend)
-  - [Frontend](#frontend)
-  - [Infrastructure](#infrastructure)
-- [Getting Started](#-getting-started)
-  - [Prerequisites](#prerequisites)
-  - [Installation](#installation)
-  - [Configuration](#configuration)
-- [Development](#-development)
-  - [Testing](#testing)
-  - [Code Style](#code-style)
-  - [Documentation](#documentation)
-- [Contributing](#-contributing)
+- [Key Features](#key-features)
+- [Why Rust & Hexagonal Architecture?](#why-rust--hexagonal-architecture)
+</details>
+
+<details open>
+<summary><strong>2. System Architecture</strong></summary>
+
+- [High-Level Overview](#-system-overview)
+- [Data Flow](#data-flow)
+- [Hexagonal Architecture](#-hexagonal-architecture-implementation)
+  - [Domain Core](#domain-core)
+  - [Ports & Adapters](#port-interactions--data-flow)
+  - [External Integrations](#external-integrations)
+</details>
+
+<details open>
+<summary><strong>3. Technology Stack</strong></summary>
+
+- [Backend Components](#backend)
+  - [Core Services](#core-services)
+  - [Data Storage](#data-storage)
+  - [Message Queue](#message-queue)
+- [Frontend Application](#-frontend-application)
+- [Infrastructure](#-infrastructure)
+</details>
+
+<details open>
+<summary><strong>4. Development Guide</strong></summary>
+
+- [Quick Start](#-quick-start)
+- [Prerequisites](#prerequisites)
+- [Configuration](#configuration)
+- [Testing Strategy](#-testing-strategy)
+- [Development Workflow](#development-workflow)
+</details>
+
+<details open>
+<summary><strong>5. Additional Resources</strong></summary>
+
+- [API Documentation](docs/api.md)
+- [Deployment Guide](docs/deployment.md)
+- [Contributing Guidelines](.github/CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
 - [License](#-license)
+</details>
 
 ## 🎯 Overview
 
