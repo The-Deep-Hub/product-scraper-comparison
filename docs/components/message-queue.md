@@ -1,5 +1,12 @@
 # 🐰 RabbitMQ Message Queue System
 
+
+[Architecture](#architecture) •
+[Implementation](#implementation-details) •
+[Configuration](#configuration) •
+[Testing](../testing/queue-testing.md)
+
+
 <div align="center">
 
 *Documentation for the RabbitMQ message queue implementation*
@@ -45,6 +52,39 @@
 ## Introduction
 
 The RabbitMQ message queue system serves as the backbone of our distributed task processing architecture. It enables reliable, asynchronous communication between the API server and worker nodes, ensuring efficient distribution and processing of scraping tasks.
+
+## Architecture
+
+```mermaid
+graph TB
+    subgraph "Publishers"
+        API[API Service]
+        Scheduler[Task Scheduler]
+    end
+
+    subgraph "RabbitMQ"
+        Exchange[Task Exchange]
+        DLX[Dead Letter Exchange]
+        MainQ[Main Queue]
+        DLQ[Dead Letter Queue]
+        RetryQ[Retry Queue]
+    end
+
+    subgraph "Consumers"
+        Workers[Worker Pool]
+        ErrorHandler[Error Handler]
+    end
+
+    API -->|Publish| Exchange
+    Scheduler -->|Schedule| Exchange
+    Exchange -->|Route| MainQ
+    MainQ -->|Process| Workers
+    MainQ -->|Failed| DLX
+    DLX -->|Retry| RetryQ
+    DLX -->|Dead Letter| DLQ
+    RetryQ -->|Requeue| Exchange
+    DLQ -->|Handle| ErrorHandler
+```
 
 ### Current Configuration
 
@@ -124,45 +164,6 @@ graph TD
     H -->|Success| I[Acknowledge]
     H -->|Failure| J[Worker-specific DLQ]
 ```
-
-[Architecture](#architecture) •
-[Implementation](#implementation-details) •
-[Configuration](#configuration) •
-[Testing](../testing/queue-testing.md)
-
-## Architecture
-
-```mermaid
-graph TB
-    subgraph "Publishers"
-        API[API Service]
-        Scheduler[Task Scheduler]
-    end
-
-    subgraph "RabbitMQ"
-        Exchange[Task Exchange]
-        DLX[Dead Letter Exchange]
-        MainQ[Main Queue]
-        DLQ[Dead Letter Queue]
-        RetryQ[Retry Queue]
-    end
-
-    subgraph "Consumers"
-        Workers[Worker Pool]
-        ErrorHandler[Error Handler]
-    end
-
-    API -->|Publish| Exchange
-    Scheduler -->|Schedule| Exchange
-    Exchange -->|Route| MainQ
-    MainQ -->|Process| Workers
-    MainQ -->|Failed| DLX
-    DLX -->|Retry| RetryQ
-    DLX -->|Dead Letter| DLQ
-    RetryQ -->|Requeue| Exchange
-    DLQ -->|Handle| ErrorHandler
-```
-
 ## Implementation Details
 
 ### Connection Management

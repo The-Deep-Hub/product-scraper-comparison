@@ -2,7 +2,8 @@
 
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/alexandresanlim/Badges4-README.md-Profile/master/assets/web-scraping.png" alt="Web Scraping Banner" width="800"/>
+<img src="https://raw.githubusercontent.com/jcardetell/rust_scraper/main/docs/assets/banner.png" alt="Rust Web Scraper Banner" width="800"/>
+
 <br/>
 <br/>
 
