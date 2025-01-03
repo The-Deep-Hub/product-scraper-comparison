@@ -2,13 +2,22 @@
 
 <div align="center">
 
+<img src="https://raw.githubusercontent.com/jcardetell/rust_scraper/main/docs/assets/banner.png" alt="Rust Web Scraper Banner" width="800"/>
+
+<br/>
+<br/>
+
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange.svg)](https://www.rust-lang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Build](https://img.shields.io/badge/build-passing-brightgreen.svg)]()
 [![Code Coverage](https://img.shields.io/badge/coverage-85%25-brightgreen.svg)]()
 [![Docker Pulls](https://img.shields.io/badge/docker%20pulls-1.2k-blue.svg)]()
 
+<br/>
+
 *A robust web scraping solution built in Rust following the Hexagonal Architecture pattern.*
+
+<br/>
 
 [📖 Documentation](docs/) •
 [🚀 Quick Start](#-quick-start) •
