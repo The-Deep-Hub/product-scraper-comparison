@@ -31,11 +31,12 @@ Welcome to the comprehensive documentation for the Rust Web Scraper project.
 - [Code Style](development/code-style.md)
 
 ### API Reference
-- [API Overview](api/overview.md)
-- [Authentication](api/authentication.md)
-- [Endpoints](api/endpoints.md)
-- [Error Handling](api/error-handling.md)
-- [Rate Limiting](api/rate-limiting.md)
+- [API Overview](api/overview.md) - Introduction and core concepts
+- [Authentication](api/authentication.md) - Authentication methods and token management
+- [Endpoints](api/endpoints.md) - Detailed endpoint documentation
+- [Error Handling](api/error-handling.md) - Error codes and handling strategies
+- [Rate Limiting](api/rate-limiting.md) - Rate limiting policies and best practices
+- [Try It Out](api/overview.md#try-it-out) - Examples in curl, Python, and JavaScript
 
 ### Frontend
 - [Frontend Architecture](frontend/architecture.md)
@@ -47,8 +48,9 @@ Welcome to the comprehensive documentation for the Rust Web Scraper project.
 
 1. **New Users**: Start with the [Getting Started](development/getting-started.md) guide
 2. **Developers**: Check the [Development Environment](development/environment.md) setup
-3. **Contributors**: Read the [Contributing](development/contributing.md) guidelines
-4. **Architects**: Review the [Architecture Overview](architecture/overview.md)
+3. **API Users**: Begin with the [API Overview](api/overview.md) and [Try It Out](api/overview.md#try-it-out) section
+4. **Contributors**: Read the [Contributing](development/contributing.md) guidelines
+5. **Architects**: Review the [Architecture Overview](architecture/overview.md)
 
 ## 🔄 Documentation Updates
 
