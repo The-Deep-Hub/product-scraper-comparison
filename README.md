@@ -173,69 +173,6 @@ Driven by our application:
 
 ## 🔌 Hexagonal Architecture Implementation
 
-Our implementation follows the hexagonal (ports and adapters) pattern, isolating the domain core from external concerns:
-
-```mermaid
-graph TB
-    subgraph "Domain Core"
-        direction TB
-        Models[Domain Models]
-        Services[Domain Services]
-        Ports[Port Interfaces]
-        Events[Domain Events]
-    end
-
-    subgraph "Inbound Adapters"
-        direction TB
-        REST[REST API]
-        CLI[CLI Interface]
-        TaskProcessor[Task Processor]
-        -->|Implements| InPorts[Inbound Ports]
-    end
-
-    subgraph "Outbound Adapters"
-        direction TB
-        OutPorts[Outbound Ports] -->|Implemented by|Implementations
-        subgraph "Implementations"
-            direction TB
-            Scrapers[Store Scrapers]
-            Cache[Redis Cache]
-            DB[MongoDB]
-            Queue[RabbitMQ]
-            Logger[Logger]
-            Metrics[Metrics]
-        end
-    end
-
-    %% Core Connections
-    InPorts -->|Uses| Models
-    Models -->|Used by| Services
-    Services -->|Uses| Ports
-    Services -->|Emits| Events
-    Events -->|Handled by| Services
-
-    %% Port Connections
-    Ports -->|Defines| OutPorts
-    InPorts -->|Uses| Services
-
-    classDef core fill:#f9f,stroke:#333,stroke-width:2px
-    classDef inbound fill:#9f9,stroke:#333,stroke-width:2px
-    classDef outbound fill:#ff9,stroke:#333,stroke-width:2px
-    
-    class Models,Services,Ports,Events core
-    class REST,CLI,TaskProcessor,InPorts inbound
-    class OutPorts,Scrapers,Cache,DB,Queue,Logger,Metrics outbound
-```
-
-The hexagonal architecture ensures:
-- Domain logic is isolated from external concerns
-- Dependencies point inward toward the domain core
-- Adapters implement ports for external communication
-- Easy testing through port interfaces
-- Flexible infrastructure switching without core changes
-
-### Port Interactions & Data Flow
-
 ```mermaid
 graph TB
     subgraph "External World"
@@ -318,24 +255,22 @@ graph TB
     class BricoScraper,BauhausScraper,RedisAdapter,RMQAdapter,EventHandler,Logger impl
 ```
 
-This diagram illustrates:
-
-1. **Inbound Flow**:
+1. ### Inbound Flow:
    - Client requests enter through REST or Task Processor adapters
    - Adapters implement inbound ports (Search, Task Management)
    - Ports delegate to domain services
 
-2. **Domain Core**:
+2. ### Domain Core:
    - Services contain business logic
    - Models represent domain entities
    - Events handle domain state changes
 
-3. **Outbound Flow**:
+3. ### Outbound Flow:
    - Services use outbound ports for external operations
    - Each port has specific adapters implementing it
    - Adapters interact with external services
 
-4. **Port Implementation**:
+4. ### Port Implementation:
    - Clear separation between port interfaces and implementations
    - Multiple implementations possible for each port
    - External services accessed only through adapters
