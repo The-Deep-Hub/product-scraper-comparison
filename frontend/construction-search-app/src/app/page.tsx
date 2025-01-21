@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { Range } from "react-range";
+import ResultCard from "./components/ResultCard";
 
 
 // Removed `mockData` import as data is now fetched from `/api/products`.
@@ -161,41 +162,7 @@ export default function Home() {
             </p>
           ) : (
             filteredProducts.map((product, index) => (
-              <div
-                key={index}
-                className="resultCard border p-4 rounded-md shadow-sm flex flex-col justify-between"
-              >
-                <div>
-                  <img src={product.image_url} alt={product.name} className="w-full h-32 object-cover rounded-md mb-4" />
-                  <h3 className="font-bold">{product.name}</h3>
-                  <a
-                    href={product.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:underline"
-                  >
-                    {product.store}
-                  </a>
-                  {product.original_price && (
-                    <div>
-                      <span className="line-through text-gray-500">{formatPrice(product.original_price)}</span>{" "}
-                      <span className="font-bold text-green-600">{formatPrice(product.current_price)}</span>
-                    </div>
-                  )}
-                  {!product.original_price && (
-                    <p className="font-bold text-lg">{formatPrice(product.current_price)}</p>
-                  )}
-                  <p className="text-sm text-gray-600">
-                    {product.description || "No description available"}
-                  </p>
-                </div>
-                <button
-                  className="mt-4 bg-blue-500 text-white py-2 px-4 rounded-md"
-                  onClick={() => window.open(product.url, "_blank")}
-                >
-                  Purchase on Site
-                </button>
-              </div>
+              <ResultCard key={index} product={product} formatPrice={formatPrice} />
             ))
           )}
         </div>
