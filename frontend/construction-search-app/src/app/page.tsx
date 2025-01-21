@@ -5,6 +5,7 @@ import { Range } from "react-range";
 import ResultCard from "./components/ResultCard";
 import ResultsGrid from "./components/ResultsGrid";
 import FilterPanel from "./components/FiltersPanel";
+import SearchBar from "./components/SearchBar";
 
 
 // Removed `mockData` import as data is now fetched from `/api/products`.
@@ -107,21 +108,13 @@ export default function Home() {
 
       {/* Main Content */}
       <main className="flex-1">
-        <div className="top-0 z-10 bg-gray-100 p-4 shadow-md mb-4 rounded-md">
-          <div className="flex gap-4">
-            <input
-              type="text"
-              placeholder="Buscar productos..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="border p-2 flex-1 rounded-md"
-            />
-            <button onClick={handleSearch} className="bg-blue-500 text-white px-4 py-2 rounded-md">
-              Buscar
-            </button>
-          </div>
-        </div>
+        <SearchBar
+          query={query}
+          setQuery={setQuery}
+          handleSearch={handleSearch}
+          handleKeyDown={handleKeyDown}
+        />
+
 
         {/* Results Grid */}
         <ResultsGrid
