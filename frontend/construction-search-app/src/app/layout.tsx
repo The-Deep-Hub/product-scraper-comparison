@@ -37,7 +37,7 @@ export default function RootLayout({
 
         {/* Footer */}
         <footer className="sticky p-4 bg-gray-200 text-center">
-          <p>© 2024 Construction Search App</p>
+          <p>© 2025 Construction Search App</p>
           <ul className="flex justify-center gap-4 mt-2 text-sm">
             <li>
               <a href="/privacy" className="text-primary hover:underline">

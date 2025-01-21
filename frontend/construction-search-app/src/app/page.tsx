@@ -1,8 +1,6 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Range } from "react-range";
-import ResultCard from "./components/ResultCard";
 import ResultsGrid from "./components/ResultsGrid";
 import FilterPanel from "./components/FiltersPanel";
 import SearchBar from "./components/SearchBar";
