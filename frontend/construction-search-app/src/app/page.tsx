@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { Range } from "react-range";
 import ResultCard from "./components/ResultCard";
+import ResultsGrid from "./components/ResultsGrid";
 
 
 // Removed `mockData` import as data is now fetched from `/api/products`.
@@ -151,21 +152,12 @@ export default function Home() {
         </div>
 
         {/* Results Grid */}
-        <div className="h-[70vh] overflow-y-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xxl:grid-cols-4 gap-4 p-4 bg-gray-100 rounded-md shadow-md">
-          {searchClicked && filteredProducts.length === 0 ? (
-            <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
-              No se encontraron resultados para tu búsqueda.
-            </p>
-          ) : !searchClicked ? (
-            <p className="text-lg font-semibold text-center text-gray-600 col-span-full mx-auto px-4">
-              Usa la barra de búsqueda para encontrar productos.
-            </p>
-          ) : (
-            filteredProducts.map((product, index) => (
-              <ResultCard key={index} product={product} formatPrice={formatPrice} />
-            ))
-          )}
-        </div>
+        <ResultsGrid
+          filteredProducts={filteredProducts}
+          searchClicked={searchClicked}
+          formatPrice={formatPrice}
+        />
+
       </main>
     </div>
   );
