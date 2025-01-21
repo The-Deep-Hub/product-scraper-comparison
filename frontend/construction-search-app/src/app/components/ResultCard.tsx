@@ -20,9 +20,9 @@ type ResultCardProps = {
 // Component to render individual product cards
 const ResultCard: React.FC<ResultCardProps> = ({ product, formatPrice }) => {
   return (
-    <div className="resultCard border p-4 rounded-md shadow-sm flex flex-col justify-between">
+    <div className="resultCard border p-4 rounded-md shadow-sm flex flex-col justify-between max-w-[300px] max-h-[500px] w-full h-full mx-auto gap-2">
       {/* Product Image */}
-      <div className="w-full h-40 flex items-center justify-center rounded-md">
+      <div className="w-full h-40 flex items-center justify-center rounded-md bg-white">
         <img
           src={product.image_url}
           alt={product.name}
@@ -56,7 +56,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ product, formatPrice }) => {
             <p className="font-bold text-lg mt-2">{formatPrice(product.current_price)}</p>
           )}
           {/* Product description */}
-          <p className="text-sm text-gray-600 mt-2 truncate">
+          <p className="text-sm text-gray-600 mt-2 line-clamp-3">
             {product.description || "No description available"}
           </p>
         </div>
