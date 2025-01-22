@@ -86,28 +86,28 @@ export default function Home() {
 
   // Function to poll the API for search results using the task ID
   const pollForResults = async (taskId: string) => {
-    const pollingInterval = 3000;  // 3 seconds between polls
-    const timeout = 90000;  // Stop polling after 1.5 minutes
+    const pollingInterval = 3000;  // 3 segundos entre cada consulta
+    const timeout = 90000;  // Detener después de 1.5 minutos
     let elapsedTime = 0;
-
+  
     while (elapsedTime < timeout) {
       if (stopSearch) {
         setError("Search was stopped by the user.");
         break;
       }
-
+  
       try {
         const response = await fetch(`${API_BASE_URL}/task/${taskId}`);
         if (!response.ok) throw new Error("Failed to retrieve search results");
-
+  
         const taskData = await response.json();
         
-        // Update progress percentage
+        // Actualiza el progreso
         const completedStores = DEFAULT_STORES.length - (taskData.pending_stores?.length || 0);
         setProgress(Math.round((completedStores / DEFAULT_STORES.length) * 100));
-
+  
         if (taskData.status === "completed") {
-          // Convert API response to frontend Product format
+          // Convertir respuesta de la API a formato del frontend
           const formattedProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
             items.map((product: any) => ({
               name: product.name,
@@ -118,19 +118,22 @@ export default function Home() {
               original_price: product.price.original ?? null,
               description: product.description && product.description !== "No description available" 
                 ? product.description 
-                : product.name,
+                : product.name, // Usa el nombre si la descripción está vacía
             }))
           );
-
-          setProducts(formattedProducts);
-          setFilteredProducts(formattedProducts);
-
-          const maxPrice = Math.max(...formattedProducts.map((p) => p.current_price));
+  
+          // Ordenar productos por precio (menor a mayor)
+          const sortedProducts = formattedProducts.sort((a, b) => a.current_price - b.current_price);
+  
+          setProducts(sortedProducts);
+          setFilteredProducts(sortedProducts);
+  
+          const maxPrice = Math.max(...sortedProducts.map((p) => p.current_price));
           setPriceRange([0, maxPrice]);
           setMaxPrice(maxPrice);
           setPendingStores([]);
-
-          return;  // Exit polling loop
+  
+          return;  // Salir del bucle de polling
         } else {
           setPendingStores(taskData.pending_stores || []);
         }
@@ -140,15 +143,15 @@ export default function Home() {
         setPendingStores([]);
         return;
       }
-
+  
       await new Promise((resolve) => setTimeout(resolve, pollingInterval));
       elapsedTime += pollingInterval;
     }
-
+  
     setError("Search timed out. Please try again.");
     setPendingStores([]);
   };
-
+  
   // Function to filter displayed products based on search query and price range
   const filterProducts = (query: string, range: [number, number]) => {
     const filtered = products.filter(
