@@ -9,7 +9,7 @@ const ProviderStatusDialog: React.FC<ProviderStatusDialogProps> = ({ pendingStor
   const [isMinimized, setIsMinimized] = useState(false);
 
   return (
-    <div className="fixed bottom-4 right-4 bg-white shadow-md rounded-md p-4 w-80 border">
+    <div className="fixed z-10 bottom-4 right-4 bg-white shadow-md rounded-md p-4 w-80 border">
       <div className="flex justify-between">
         <h3 className="font-semibold text-lg">Processing Stores</h3>
         <button onClick={() => setIsMinimized(!isMinimized)} className="text-lg">

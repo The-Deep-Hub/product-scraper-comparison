@@ -25,7 +25,7 @@ export async function GET() {
       body: JSON.stringify({
         query: "default", // Placeholder, will be replaced with real search queries
         stores: ["leroy", "bauhaus", "bricodepot"],
-        num_products: 5,
+        num_products: 7,
       }),
     });
 
