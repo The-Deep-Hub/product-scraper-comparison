@@ -4,16 +4,19 @@ import { useState } from "react";
 import ResultsGrid from "./components/ResultsGrid";
 import FilterPanel from "./components/FiltersPanel";
 import SearchBar from "./components/SearchBar";
+import MessageDialog from "./components/MessageDialog";
+import ProviderStatusDialog from "./components/ProviderStatusDialog";
+import SearchProgress from "./components/SearchProgress";
 
 // Type definition for Product, ensuring consistency with the API response
 type Product = {
-  name: string; // Product name
-  store: string; // Store name (e.g., "leroy", "bricodepot")
-  url: string; // URL to the product page
-  image_url: string; // URL of the product image
-  current_price: number; // Current price (in EUR)
-  original_price: number | null; // Original price (null if no discount)
-  description: string; // Product description (fallback "No description available" if missing)
+  name: string;  // Product name
+  store: string;  // Store name (e.g., "leroy", "bricodepot")
+  url: string;  // URL to the product page
+  image_url: string;  // URL of the product image
+  current_price: number;  // Current price (in EUR)
+  original_price: number | null;  // Original price (null if no discount)
+  description: string;  // Product description (fallback to "No description available" if missing)
 };
 
 // Define the API endpoint and default stores for search
@@ -22,21 +25,39 @@ const DEFAULT_STORES = ["leroy", "bauhaus", "bricodepot"];
 
 export default function Home() {
   // State for managing product data
-  const [products, setProducts] = useState<Product[]>([]); // Holds fetched product data
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]); // Products filtered by query and price
-  const [query, setQuery] = useState<string>(""); // Search query input by user
-  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]); // Selected price range
-  const [error, setError] = useState<string | null>(null); // Error message state
-  const [loading, setLoading] = useState<boolean>(false); // Loading indicator state
-  const [maxPrice, setMaxPrice] = useState<number>(100); // Maximum price from fetched products
-  const [searchClicked, setSearchClicked] = useState<boolean>(false); // State to track search action
+  const [products, setProducts] = useState<Product[]>([]);  // Holds fetched product data
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]);  // Products filtered by query and price
+  const [query, setQuery] = useState<string>("");  // Search query input by user
+  const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]);  // Selected price range
+  const [error, setError] = useState<string | null>(null);  // Error message state
+  const [loading, setLoading] = useState<boolean>(false);  // Loading indicator state
+  const [maxPrice, setMaxPrice] = useState<number>(100);  // Maximum price from fetched products
+  const [searchClicked, setSearchClicked] = useState<boolean>(false);  // State to track search action
+  const [pendingStores, setPendingStores] = useState<string[]>([]);  // Stores still being processed
+  const [searching, setSearching] = useState<boolean>(false);  // Prevents multiple searches
+  const [stopSearch, setStopSearch] = useState<boolean>(false);  // Stops ongoing search
+  const [progress, setProgress] = useState<number>(0);  
 
   // Function to initiate product search via the API
   const handleSearch = async () => {
+    if (searching) {
+      setError("A search is already in progress. Please wait for it to finish.");
+      return;
+    }
+
+    if (!query.trim()) {
+      setError("Please enter a search query.");
+      return;
+    }
+
     setSearchClicked(true);
     setError(null);
     setLoading(true);
-    setProducts([]); // Clear previous results
+    setSearching(true);  // Block new searches
+    setStopSearch(false);  // Reset stop state
+    setProducts([]);  // Clear previous results
+    setPendingStores(DEFAULT_STORES);  // Assume all stores are pending initially
+    setProgress(0);
 
     try {
       // Send search request to API
@@ -46,46 +67,58 @@ export default function Home() {
         body: JSON.stringify({
           query,
           stores: DEFAULT_STORES,
-          num_products: 10, // Limiting to 10 products per store
+          num_products: 10,  // Limiting to 10 products per store
         }),
       });
 
       if (!response.ok) throw new Error("Failed to initiate search");
 
-      const { task_id } = await response.json(); // Extract task ID from response
-      await pollForResults(task_id); // Start polling for results
+      const { task_id } = await response.json();  // Extract task ID from response
+      await pollForResults(task_id);  // Start polling for results
     } catch (err) {
       setError("Error retrieving products. Please try again.");
       console.error("Search error:", err);
     } finally {
       setLoading(false);
+      setSearching(false);  // Allow new searches
     }
   };
 
   // Function to poll the API for search results using the task ID
   const pollForResults = async (taskId: string) => {
-    const pollingInterval = 3000; // 3 seconds between polls
-    const timeout = 60000; // Stop polling after 1 minute
+    const pollingInterval = 3000;  // 3 seconds between polls
+    const timeout = 90000;  // Stop polling after 1.5 minutes
     let elapsedTime = 0;
 
     while (elapsedTime < timeout) {
+      if (stopSearch) {
+        setError("Search was stopped by the user.");
+        break;
+      }
+
       try {
         const response = await fetch(`${API_BASE_URL}/task/${taskId}`);
         if (!response.ok) throw new Error("Failed to retrieve search results");
 
         const taskData = await response.json();
+        
+        // Update progress percentage
+        const completedStores = DEFAULT_STORES.length - (taskData.pending_stores?.length || 0);
+        setProgress(Math.round((completedStores / DEFAULT_STORES.length) * 100));
 
         if (taskData.status === "completed") {
           // Convert API response to frontend Product format
           const formattedProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
             items.map((product: any) => ({
               name: product.name,
-              store: store, // Use the store name from API response
+              store: store,
               url: product.urls.product,
               image_url: product.urls.image,
               current_price: product.price.current,
               original_price: product.price.original ?? null,
-              description: product.description ?? "No description available",
+              description: product.description && product.description !== "No description available" 
+                ? product.description 
+                : product.name,
             }))
           );
 
@@ -95,19 +128,16 @@ export default function Home() {
           const maxPrice = Math.max(...formattedProducts.map((p) => p.current_price));
           setPriceRange([0, maxPrice]);
           setMaxPrice(maxPrice);
+          setPendingStores([]);
 
-          return; // Exit polling loop
-        } else if (taskData.status === "failed") {
-          setError("Search failed. Please try again.");
-          console.error("Search failed:", taskData.error);
-          return;
+          return;  // Exit polling loop
         } else {
-          // Show pending store status
-          console.log("Pending stores:", taskData.pending_stores);
+          setPendingStores(taskData.pending_stores || []);
         }
       } catch (err) {
         console.error("Polling error:", err);
         setError("Error retrieving search results.");
+        setPendingStores([]);
         return;
       }
 
@@ -116,6 +146,7 @@ export default function Home() {
     }
 
     setError("Search timed out. Please try again.");
+    setPendingStores([]);
   };
 
   // Function to filter displayed products based on search query and price range
@@ -143,9 +174,6 @@ export default function Home() {
       currency: "EUR",
     }).format(price);
 
-  if (loading) return <p>Searching for products...</p>;
-  if (error) return <p className="text-red-500">{error}</p>;
-
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4">
       {/* Filters Panel */}
@@ -163,8 +191,17 @@ export default function Home() {
           setQuery={setQuery}
           handleSearch={handleSearch}
           handleKeyDown={(e) => e.key === "Enter" && handleSearch()}
+          searching={searching}
         />
 
+        {/* Progress Indicator */}
+        {searching && <SearchProgress duration={90000} />}
+
+        {/* Status and Loading Messages as Dialogs */}
+        {loading && <MessageDialog message="Retrieving search results, please wait..." type="loading" onClose={() => setLoading(false)} />}
+        {error && <MessageDialog message={error} type="error" onClose={() => setError(null)} />}
+        {pendingStores.length > 0 && <ProviderStatusDialog pendingStores={pendingStores} completedStores={DEFAULT_STORES.filter((store) => !pendingStores.includes(store))} />}
+        
         {/* Results Grid */}
         <ResultsGrid filteredProducts={filteredProducts} searchClicked={searchClicked} formatPrice={formatPrice} />
       </main>
