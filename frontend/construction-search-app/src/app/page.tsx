@@ -1,12 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import ResultsGrid from "./components/ResultsGrid";
 import FilterPanel from "./components/FiltersPanel";
 import SearchBar from "./components/SearchBar";
-
-
-// Removed `mockData` import as data is now fetched from `/api/products`.
 
 // Type definition for Product, ensuring consistency with the API response
 type Product = {
@@ -16,45 +13,112 @@ type Product = {
   image_url: string; // URL of the product image
   current_price: number; // Current price (in EUR)
   original_price: number | null; // Original price (null if no discount)
-  description: string; // Product description (e.g., "No description available"). Might return "No description available" as missing description. Title could be a substitute to handle missing data. 
+  description: string; // Product description (fallback "No description available" if missing)
 };
 
+// Define the API endpoint and default stores for search
+const API_BASE_URL = "http://localhost:8080";
+const DEFAULT_STORES = ["leroy", "bauhaus", "bricodepot"];
+
 export default function Home() {
-  // State for managing products fetched from the backend
-  const [products, setProducts] = useState<Product[]>([]); // All products fetched from API
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]); // Products filtered by search query and price range
-  const [query, setQuery] = useState<string>(""); // User's search query
+  // State for managing product data
+  const [products, setProducts] = useState<Product[]>([]); // Holds fetched product data
+  const [filteredProducts, setFilteredProducts] = useState<Product[]>([]); // Products filtered by query and price
+  const [query, setQuery] = useState<string>(""); // Search query input by user
   const [priceRange, setPriceRange] = useState<[number, number]>([0, 100]); // Selected price range
   const [error, setError] = useState<string | null>(null); // Error message state
-  const [loading, setLoading] = useState<boolean>(true); // Loading state to manage fetch status
+  const [loading, setLoading] = useState<boolean>(false); // Loading indicator state
   const [maxPrice, setMaxPrice] = useState<number>(100); // Maximum price from fetched products
   const [searchClicked, setSearchClicked] = useState<boolean>(false); // State to track search action
 
-  // Fetch data from API on component mount
-  useEffect(() => {
-    const fetchProducts = async () => {
+  // Function to initiate product search via the API
+  const handleSearch = async () => {
+    setSearchClicked(true);
+    setError(null);
+    setLoading(true);
+    setProducts([]); // Clear previous results
+
+    try {
+      // Send search request to API
+      const response = await fetch(`${API_BASE_URL}/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          stores: DEFAULT_STORES,
+          num_products: 10, // Limiting to 10 products per store
+        }),
+      });
+
+      if (!response.ok) throw new Error("Failed to initiate search");
+
+      const { task_id } = await response.json(); // Extract task ID from response
+      await pollForResults(task_id); // Start polling for results
+    } catch (err) {
+      setError("Error retrieving products. Please try again.");
+      console.error("Search error:", err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Function to poll the API for search results using the task ID
+  const pollForResults = async (taskId: string) => {
+    const pollingInterval = 3000; // 3 seconds between polls
+    const timeout = 60000; // Stop polling after 1 minute
+    let elapsedTime = 0;
+
+    while (elapsedTime < timeout) {
       try {
-        const response = await fetch("/api/products"); // GET request to fetch product data
-        if (!response.ok) throw new Error("Failed to fetch products"); // Handle non-200 status codes
+        const response = await fetch(`${API_BASE_URL}/task/${taskId}`);
+        if (!response.ok) throw new Error("Failed to retrieve search results");
 
-        const data: Product[] = await response.json(); // Parse JSON response
-        setProducts(data); // Store fetched products
-        setFilteredProducts(data); // Initialize filtered products with all fetched data
+        const taskData = await response.json();
 
-        const maxPrice = Math.max(...data.map((p) => p.current_price)); // Calculate maximum price
-        setPriceRange([0, maxPrice]); // Set initial price range
-        setMaxPrice(maxPrice); // Set maximum price for slider
+        if (taskData.status === "completed") {
+          // Convert API response to frontend Product format
+          const formattedProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
+            items.map((product: any) => ({
+              name: product.name,
+              store: store, // Use the store name from API response
+              url: product.urls.product,
+              image_url: product.urls.image,
+              current_price: product.price.current,
+              original_price: product.price.original ?? null,
+              description: product.description ?? "No description available",
+            }))
+          );
+
+          setProducts(formattedProducts);
+          setFilteredProducts(formattedProducts);
+
+          const maxPrice = Math.max(...formattedProducts.map((p) => p.current_price));
+          setPriceRange([0, maxPrice]);
+          setMaxPrice(maxPrice);
+
+          return; // Exit polling loop
+        } else if (taskData.status === "failed") {
+          setError("Search failed. Please try again.");
+          console.error("Search failed:", taskData.error);
+          return;
+        } else {
+          // Show pending store status
+          console.log("Pending stores:", taskData.pending_stores);
+        }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "An unknown error occurred"); // Set error message for display
-      } finally {
-        setLoading(false); // Stop loading indicator
+        console.error("Polling error:", err);
+        setError("Error retrieving search results.");
+        return;
       }
-    };
 
-    fetchProducts();
-  }, []); // Run only once on mount
+      await new Promise((resolve) => setTimeout(resolve, pollingInterval));
+      elapsedTime += pollingInterval;
+    }
 
-  // Function to filter products based on search query and price range
+    setError("Search timed out. Please try again.");
+  };
+
+  // Function to filter displayed products based on search query and price range
   const filterProducts = (query: string, range: [number, number]) => {
     const filtered = products.filter(
       (product) =>
@@ -62,38 +126,26 @@ export default function Home() {
         product.current_price >= range[0] &&
         product.current_price <= range[1]
     );
-    setFilteredProducts(filtered); // Update filtered products
+    setFilteredProducts(filtered);
   };
 
-  // Handle search button click
-  const handleSearch = () => {
-    setSearchClicked(true); // Update searchClicked state
-    filterProducts(query, priceRange); // Filter products based on current search and range
-  };
-
-  // Handle Enter key press in the search bar
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "Enter") handleSearch(); // Trigger search on Enter key press
-  };
-
-  // Handle changes in the price range slider
+  // Handle price range updates from the slider
   const handlePriceRangeChange = (values: number[]) => {
     const updatedRange: [number, number] = [values[0], values[1]];
-    setPriceRange(updatedRange); // Update selected price range
-    filterProducts(query, updatedRange); // Re-filter products in real-time
+    setPriceRange(updatedRange);
+    filterProducts(query, updatedRange);
   };
 
-  // Format price for display in currency format
+  // Format price display
   const formatPrice = (price: number) =>
     new Intl.NumberFormat("es-ES", {
       style: "currency",
       currency: "EUR",
-    }).format(price); // Format price as per Spanish locale
+    }).format(price);
 
-  if (loading) return <p>Loading...</p>; // Display loading message while data is being fetched
-  if (error) return <p>Error: {error}</p>; // Display error message if fetching fails
+  if (loading) return <p>Searching for products...</p>;
+  if (error) return <p className="text-red-500">{error}</p>;
 
-  // Component rendering
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4">
       {/* Filters Panel */}
@@ -110,17 +162,11 @@ export default function Home() {
           query={query}
           setQuery={setQuery}
           handleSearch={handleSearch}
-          handleKeyDown={handleKeyDown}
+          handleKeyDown={(e) => e.key === "Enter" && handleSearch()}
         />
-
 
         {/* Results Grid */}
-        <ResultsGrid
-          filteredProducts={filteredProducts}
-          searchClicked={searchClicked}
-          formatPrice={formatPrice}
-        />
-
+        <ResultsGrid filteredProducts={filteredProducts} searchClicked={searchClicked} formatPrice={formatPrice} />
       </main>
     </div>
   );
