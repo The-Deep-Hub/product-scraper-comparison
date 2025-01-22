@@ -13,26 +13,65 @@ type Product = {
 };
 
 type ResultsGridProps = {
-  filteredProducts: Product[];
-  searchClicked: boolean;
-  formatPrice: (price: number) => string;
+  filteredProducts: Product[];  // Filtered list of products to be displayed
+  searchClicked: boolean;  // Track if search has been initiated
+  formatPrice: (price: number) => string;  // Function to format prices
+  pendingStores?: string[];  // List of stores that are still processing
+  completedStores?: string[];  // List of stores that have returned results
+  loading?: boolean;  // Indicates if results are still loading
+  error?: string | null;  // Error message if fetching fails
 };
 
-const ResultsGrid: React.FC<ResultsGridProps> = ({ filteredProducts, searchClicked, formatPrice }) => {
+const ResultsGrid: React.FC<ResultsGridProps> = ({
+  filteredProducts,
+  searchClicked,
+  formatPrice,
+  pendingStores = [],
+  completedStores = [],
+  loading,
+  error,
+}) => {
   return (
     <div className="h-[70vh] overflow-y-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 p-4 bg-gray-100 rounded-md shadow-md">
-      {searchClicked && filteredProducts.length === 0 ? (
+      {loading && (
+        <p className="text-lg font-semibold text-center text-blue-500 col-span-full mx-auto px-4">
+          Buscando productos... Por favor, espere.
+        </p>
+      )}
+
+      {error && (
+        <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
+          Error: {error}
+        </p>
+      )}
+
+      {!loading && searchClicked && filteredProducts.length === 0 && (
         <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
           No se encontraron resultados para tu búsqueda.
         </p>
-      ) : !searchClicked ? (
+      )}
+
+      {!searchClicked && (
         <p className="text-lg font-semibold text-center text-gray-600 col-span-full mx-auto px-4">
           Usa la barra de búsqueda para encontrar productos.
         </p>
-      ) : (
-        filteredProducts.map((product, index) => (
-          <ResultCard key={index} product={product} formatPrice={formatPrice} />
-        ))
+      )}
+
+      {filteredProducts.map((product, index) => (
+        <ResultCard key={index} product={product} formatPrice={formatPrice} />
+      ))}
+
+      {/* Show pending and completed stores status */}
+      {pendingStores.length > 0 && (
+        <p className="text-sm text-yellow-500 col-span-full text-center">
+          Procesando resultados de: {pendingStores.join(", ")}
+        </p>
+      )}
+
+      {completedStores.length > 0 && (
+        <p className="text-sm text-green-500 col-span-full text-center">
+          Resultados disponibles de: {completedStores.join(", ")}
+        </p>
       )}
     </div>
   );
