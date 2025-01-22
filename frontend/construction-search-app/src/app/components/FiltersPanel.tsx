@@ -31,7 +31,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
 
       {/* Price Range Filter */}
       <div>
-        <label className="block mb-2">Rango de precio:</label>
+        <label className="block font-semibold mb-2">Rango de precio:</label>
 
         {/* Price range slider component */}
         <Range
@@ -75,7 +75,7 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
 
       {/* Provider Filter */}
       <div className="mt-4">
-        <h3 className="text-md font-semibold mb-2">Proveedores:</h3>
+        <label className="block font-semibold mb-2">Proveedores:</label>
         {PROVIDER_OPTIONS.map((provider) => (
           <div key={provider.key} className="flex items-center mb-2">
             <input
