@@ -21,21 +21,25 @@ services:
   redis:
     image: redis:7.2-alpine
     container_name: rust_scraper_redis
-    command: redis-server --requirepass ${REDIS_PASSWORD}
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
     ports:
       - "6379:6379"
     volumes:
       - redis_data:/data
-      - ./docker/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     environment:
       - REDIS_PASSWORD=${REDIS_PASSWORD}
     networks:
       - rust_scraper_network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
       interval: 5s
       timeout: 5s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
 
   redis-commander:
     image: rediscommander/redis-commander:latest
@@ -69,6 +73,72 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+
+  rust:
+    image: rust:latest
+    container_name: rust_scraper_api
+    volumes:
+      - .:/usr/src/app
+    working_dir: /usr/src/app
+    ports:
+      - "8080:8080"  # Adjust the port according to your API configuration
+    environment:
+      - CARGO_TARGET_DIR=/usr/src/app/target
+      # Add any environment variables your API needs
+      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/${MONGO_DATABASE}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST}
+    depends_on:
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rust_scraper_network
+    command: cargo run --bin api  # Assuming your binary is named 'api'
+
+  worker:
+    image: rust:latest
+    container_name: rust_scraper_worker
+    volumes:
+      - .:/usr/src/app
+    working_dir: /usr/src/app
+    environment:
+      - CARGO_TARGET_DIR=/usr/src/app/target
+      - MONGODB_URI=mongodb://${MONGO_APP_USERNAME}:${MONGO_APP_PASSWORD}@mongodb:27017/${MONGO_DATABASE}
+      - REDIS_URL=redis://:${REDIS_PASSWORD}@redis:6379
+      - RABBITMQ_URL=amqp://${RABBITMQ_USER}:${RABBITMQ_PASSWORD}@rabbitmq:5672/${RABBITMQ_VHOST}
+      - ZYTE_API_KEY=${ZYTE_API_KEY}
+    depends_on:
+      mongodb:
+        condition: service_started
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - rust_scraper_network
+    command: cargo run --bin worker
+
+  frontend:
+    build:
+      context: ./frontend/construction-search-app
+      dockerfile: dockerfile
+    container_name: rust_scraper_frontend
+    ports:
+      - "3001:3001"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://rust:8080
+    volumes:
+      - ./frontend/construction-search-app:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - rust
+    networks:
+      - rust_scraper_network
 
 networks:
   rust_scraper_network:
