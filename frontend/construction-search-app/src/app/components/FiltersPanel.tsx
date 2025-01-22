@@ -6,22 +6,25 @@ type FilterPanelProps = {
   priceRange: [number, number];  // Selected price range
   formatPrice: (price: number) => string;  // Function to format prices for display
   handlePriceRangeChange: (values: number[]) => void;  // Handler to update price range
+  selectedProviders: string[]; // Selected providers
+  handleProviderChange: (provider: string) => void; // Handler for provider checkbox change
 };
 
-/**
- * Component to filter products based on price range.
- * 
- * @param maxPrice Maximum price of available products.
- * @param priceRange Selected minimum and maximum price range.
- * @param formatPrice Function to format price display.
- * @param handlePriceRangeChange Function to handle price range selection.
- */
 const FilterPanel: React.FC<FilterPanelProps> = ({
   maxPrice,
   priceRange,
   formatPrice,
   handlePriceRangeChange,
+  selectedProviders,
+  handleProviderChange
 }) => {
+  // Provider options with real names
+  const PROVIDER_OPTIONS = [
+    { key: "leroy", label: "Leroy Merlin" },
+    { key: "bauhaus", label: "Bauhaus" },
+    { key: "bricodepot", label: "Bricodepot" },
+  ];
+
   return (
     <aside className="responsive top-4 w-full md:w-1/4 bg-gray-100 p-4 rounded-md shadow-md">
       <h2 className="text-lg font-bold mb-4">Filtros</h2>
@@ -68,6 +71,25 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           <span>Mín: {formatPrice(priceRange[0])}</span>
           <span>Máx: {formatPrice(priceRange[1])}</span>
         </div>
+      </div>
+
+      {/* Provider Filter */}
+      <div className="mt-4">
+        <h3 className="text-md font-semibold mb-2">Proveedores:</h3>
+        {PROVIDER_OPTIONS.map((provider) => (
+          <div key={provider.key} className="flex items-center mb-2">
+            <input
+              type="checkbox"
+              id={provider.key}
+              checked={selectedProviders.includes(provider.key)}
+              onChange={() => handleProviderChange(provider.key)}
+              className="mr-2"
+            />
+            <label htmlFor={provider.key} className="text-sm">
+              {provider.label}
+            </label>
+          </div>
+        ))}
       </div>
 
       {/* Message when no products are available */}

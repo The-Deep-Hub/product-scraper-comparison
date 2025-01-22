@@ -36,7 +36,9 @@ export default function Home() {
   const [pendingStores, setPendingStores] = useState<string[]>([]);  // Stores still being processed
   const [searching, setSearching] = useState<boolean>(false);  // Prevents multiple searches
   const [stopSearch, setStopSearch] = useState<boolean>(false);  // Stops ongoing search
-  const [progress, setProgress] = useState<number>(0);  
+  const [progress, setProgress] = useState<number>(0);
+  const [selectedProviders, setSelectedProviders] = useState<string[]>(DEFAULT_STORES);
+
 
   // Function to initiate product search via the API
   const handleSearch = async () => {
@@ -89,23 +91,23 @@ export default function Home() {
     const pollingInterval = 3000;  // 3 segundos entre cada consulta
     const timeout = 90000;  // Detener después de 1.5 minutos
     let elapsedTime = 0;
-  
+
     while (elapsedTime < timeout) {
       if (stopSearch) {
         setError("Search was stopped by the user.");
         break;
       }
-  
+
       try {
         const response = await fetch(`${API_BASE_URL}/task/${taskId}`);
         if (!response.ok) throw new Error("Failed to retrieve search results");
-  
+
         const taskData = await response.json();
-        
+
         // Actualiza el progreso
         const completedStores = DEFAULT_STORES.length - (taskData.pending_stores?.length || 0);
         setProgress(Math.round((completedStores / DEFAULT_STORES.length) * 100));
-  
+
         if (taskData.status === "completed") {
           // Convertir respuesta de la API a formato del frontend
           const formattedProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
@@ -116,23 +118,23 @@ export default function Home() {
               image_url: product.urls.image,
               current_price: product.price.current,
               original_price: product.price.original ?? null,
-              description: product.description && product.description !== "No description available" 
-                ? product.description 
+              description: product.description && product.description !== "No description available"
+                ? product.description
                 : product.name, // Usa el nombre si la descripción está vacía
             }))
           );
-  
+
           // Ordenar productos por precio (menor a mayor)
           const sortedProducts = formattedProducts.sort((a, b) => a.current_price - b.current_price);
-  
+
           setProducts(sortedProducts);
           setFilteredProducts(sortedProducts);
-  
+
           const maxPrice = Math.max(...sortedProducts.map((p) => p.current_price));
           setPriceRange([0, maxPrice]);
           setMaxPrice(maxPrice);
           setPendingStores([]);
-  
+
           return;  // Salir del bucle de polling
         } else {
           setPendingStores(taskData.pending_stores || []);
@@ -143,22 +145,39 @@ export default function Home() {
         setPendingStores([]);
         return;
       }
-  
+
       await new Promise((resolve) => setTimeout(resolve, pollingInterval));
       elapsedTime += pollingInterval;
     }
-  
+
     setError("Search timed out. Please try again.");
     setPendingStores([]);
   };
-  
-  // Function to filter displayed products based on search query and price range
-  const filterProducts = (query: string, range: [number, number]) => {
+
+
+// Function to handle provider checkbox change
+const handleProviderChange = (provider: string) => {
+  setSelectedProviders((prevProviders) => {
+    const updatedProviders = prevProviders.includes(provider)
+      ? prevProviders.filter((p) => p !== provider)  // Remove provider
+      : [...prevProviders, provider];  // Add provider
+    
+    // Call filtering function after updating selected providers
+    filterProducts(query, priceRange, updatedProviders);
+    
+    return updatedProviders;
+  });
+};
+
+
+  // Function to filter displayed products based on search query, price range, and selected providers
+  const filterProducts = (query: string, range: [number, number], providers: string[]) => {
     const filtered = products.filter(
       (product) =>
         product.name.toLowerCase().includes(query.toLowerCase()) &&
         product.current_price >= range[0] &&
-        product.current_price <= range[1]
+        product.current_price <= range[1] &&
+        providers.includes(product.store) // Filter by selected providers
     );
     setFilteredProducts(filtered);
   };
@@ -167,8 +186,9 @@ export default function Home() {
   const handlePriceRangeChange = (values: number[]) => {
     const updatedRange: [number, number] = [values[0], values[1]];
     setPriceRange(updatedRange);
-    filterProducts(query, updatedRange);
+    filterProducts(query, updatedRange, selectedProviders);
   };
+
 
   // Format price display
   const formatPrice = (price: number) =>
@@ -185,6 +205,8 @@ export default function Home() {
         priceRange={priceRange}
         formatPrice={formatPrice}
         handlePriceRangeChange={handlePriceRangeChange}
+        selectedProviders={selectedProviders}
+        handleProviderChange={handleProviderChange}
       />
 
       {/* Main Content */}
@@ -204,7 +226,7 @@ export default function Home() {
         {loading && <MessageDialog message="Retrieving search results, please wait..." type="loading" onClose={() => setLoading(false)} />}
         {error && <MessageDialog message={error} type="error" onClose={() => setError(null)} />}
         {pendingStores.length > 0 && <ProviderStatusDialog pendingStores={pendingStores} completedStores={DEFAULT_STORES.filter((store) => !pendingStores.includes(store))} />}
-        
+
         {/* Results Grid */}
         <ResultsGrid filteredProducts={filteredProducts} searchClicked={searchClicked} formatPrice={formatPrice} />
       </main>
