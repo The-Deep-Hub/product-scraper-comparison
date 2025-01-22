@@ -31,13 +31,13 @@ export default function RootLayout({
         </header>
 
         {/* Main Content */}
-        <main className="flex-1 container mx-auto px-4 flex flex-col gap-4">
+        <main className="flex-1 w-full max-w-[1920px] mx-auto px-4 sm:px-8 md:px-12 lg:px-20 xl:px-32 2xl:px-48">
           {children}
         </main>
 
         {/* Footer */}
         <footer className="sticky p-4 bg-gray-200 text-center">
-          <p>© 2024 Construction Search App</p>
+          <p>© 2025 Construction Search App</p>
           <ul className="flex justify-center gap-4 mt-2 text-sm">
             <li>
               <a href="/privacy" className="text-primary hover:underline">

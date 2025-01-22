@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Range } from "react-range";
+import ResultsGrid from "./components/ResultsGrid";
+import FilterPanel from "./components/FiltersPanel";
+import SearchBar from "./components/SearchBar";
 
 
 // Removed `mockData` import as data is now fetched from `/api/products`.
@@ -95,110 +97,30 @@ export default function Home() {
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4">
       {/* Filters Panel */}
-      <aside className="responsive top-4 w-full md:w-1/4 bg-gray-100 p-4 rounded-md shadow-md">
-        <h2 className="text-lg font-bold mb-4">Filtros</h2>
-        <div>
-          <label className="block mb-2">Rango de precio:</label>
-          <Range
-            step={1}
-            min={0}
-            max={maxPrice}
-            values={priceRange}
-            onChange={handlePriceRangeChange}
-            renderTrack={({ props, children }) => (
-              <div {...props} className="w-full h-2 bg-gray-300 rounded-md relative">
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${((priceRange[0] - 0) / maxPrice) * 100}%`,
-                    right: `${100 - ((priceRange[1] - 0) / maxPrice) * 100}%`,
-                    backgroundColor: "blue",
-                    height: "100%",
-                    borderRadius: "4px",
-                  }}
-                />
-                {children}
-              </div>
-            )}
-            renderThumb={({ props, isDragged }) => (
-              <div {...props} className={`w-4 h-4 ${isDragged ? "bg-blue-700" : "bg-blue-500"} rounded-full shadow-md`} />
-            )}
-          />
-          <div className="flex justify-between text-sm mt-2">
-            <span>Mín: {formatPrice(priceRange[0])}</span>
-            <span>Máx: {formatPrice(priceRange[1])}</span>
-          </div>
-        </div>
-      </aside>
+      <FilterPanel
+        maxPrice={maxPrice}
+        priceRange={priceRange}
+        formatPrice={formatPrice}
+        handlePriceRangeChange={handlePriceRangeChange}
+      />
 
       {/* Main Content */}
       <main className="flex-1">
-        <div className="top-0 z-10 bg-gray-100 p-4 shadow-md mb-4 rounded-md">
-          <div className="flex gap-4">
-            <input
-              type="text"
-              placeholder="Buscar productos..."
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onKeyDown={handleKeyDown}
-              className="border p-2 flex-1 rounded-md"
-            />
-            <button onClick={handleSearch} className="bg-blue-500 text-white px-4 py-2 rounded-md">
-              Buscar
-            </button>
-          </div>
-        </div>
+        <SearchBar
+          query={query}
+          setQuery={setQuery}
+          handleSearch={handleSearch}
+          handleKeyDown={handleKeyDown}
+        />
+
 
         {/* Results Grid */}
-        <div className="h-[70vh] overflow-y-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 p-4 bg-gray-100 rounded-md shadow-md">
-          {searchClicked && filteredProducts.length === 0 ? (
-            <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
-              No se encontraron resultados para tu búsqueda.
-            </p>
-          ) : !searchClicked ? (
-            <p className="text-lg font-semibold text-center text-gray-600 col-span-full mx-auto px-4">
-              Usa la barra de búsqueda para encontrar productos.
-            </p>
-          ) : (
-            filteredProducts.map((product, index) => (
-              <div
-                key={index}
-                className="resultCard border p-4 rounded-md shadow-sm flex flex-col justify-between"
-              >
-                <div>
-                  <img src={product.image_url} alt={product.name} className="w-full h-32 object-cover rounded-md mb-4" />
-                  <h3 className="font-bold">{product.name}</h3>
-                  <a
-                    href={product.url}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-blue-500 hover:underline"
-                  >
-                    {product.store}
-                  </a>
-                  {product.original_price && (
-                    <div>
-                      <span className="line-through text-gray-500">{formatPrice(product.original_price)}</span>{" "}
-                      <span className="font-bold text-green-600">{formatPrice(product.current_price)}</span>
-                    </div>
-                  )}
-                  {!product.original_price && (
-                    <p className="font-bold text-lg">{formatPrice(product.current_price)}</p>
-                  )}
-                  <p className="text-sm text-gray-600">
-                    {product.description || "No description available"}
-                  </p>
-                </div>
-                <button
-                  className="mt-4 bg-blue-500 text-white py-2 px-4 rounded-md"
-                  onClick={() => window.open(product.url, "_blank")}
-                >
-                  Purchase on Site
-                </button>
-              </div>
-            ))
-          )}
-        </div>
+        <ResultsGrid
+          filteredProducts={filteredProducts}
+          searchClicked={searchClicked}
+          formatPrice={formatPrice}
+        />
+
       </main>
     </div>
   );

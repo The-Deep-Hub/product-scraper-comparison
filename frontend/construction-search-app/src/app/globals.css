@@ -67,4 +67,68 @@ textarea {
 }
 
 
+/* Default styles for small screens */
+.container {
+  width: 100%;
+  max-width: 100%;
+  margin: 0 auto;
+  padding-left: 1rem; /* Small padding for mobile */
+  padding-right: 1rem;
+}
 
+/* Increase width and padding for tablets */
+@media (min-width: 640px) {
+  .container {
+    max-width: 90%;
+    padding-left: 2rem;
+    padding-right: 2rem;
+  }
+}
+
+/* Increase width for medium screens */
+@media (min-width: 1024px) {
+  .container {
+    max-width: 85%;
+    padding-left: 4rem;
+    padding-right: 4rem;
+  }
+}
+
+/* Full width for larger screens */
+@media (min-width: 1440px) {
+  .container {
+    max-width: 75%;
+    padding-left: 6rem;
+    padding-right: 6rem;
+  }
+}
+
+/* Ultra-wide screens */
+@media (min-width: 1920px) {
+  .container {
+    max-width: 70%;
+    padding-left: 8rem;
+    padding-right: 8rem;
+  }
+}
+
+img {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  object-fit: contain; /* Maintain aspect ratio */
+  background-color: white; /* Ensure clean background */
+}
+
+.resultCard {
+  background-color: #ededed;
+}
+
+.resultCard img {
+  object-fit: contain;
+  background-color: white;
+  width: 100%;
+  height: 100%;
+  padding: 3%;
+  margin-top: 5%;
+}
