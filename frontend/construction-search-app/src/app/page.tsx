@@ -69,7 +69,7 @@ export default function Home() {
         body: JSON.stringify({
           query,
           stores: DEFAULT_STORES,
-          num_products: 10,  // Limiting to 10 products per store
+          num_products: 5,  // Limiting to 5 products per store
         }),
       });
 
@@ -86,7 +86,6 @@ export default function Home() {
     }
   };
 
-  // Function to poll the API for search results using the task ID
   // Function to poll the API for search results using the task ID
   const pollForResults = async (taskId: string) => {
     const pollingInterval = 3000;  // 3 segundos entre cada consulta
@@ -109,9 +108,9 @@ export default function Home() {
         const completedStores = DEFAULT_STORES.length - (taskData.pending_stores?.length || 0);
         setProgress(Math.round((completedStores / DEFAULT_STORES.length) * 100));
 
-        if (taskData.stores) {
+        if (taskData.status === "completed") {
           // Convertir respuesta de la API a formato del frontend
-          const newProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
+          const formattedProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
             items.map((product: any) => ({
               name: product.name,
               store: store,
@@ -125,18 +124,17 @@ export default function Home() {
             }))
           );
 
-          // Actualiza los productos de forma incremental y los ordena por precio (menor a mayor)
-          setProducts((prevProducts) => {
-            const updatedProducts = [...prevProducts, ...newProducts].sort((a, b) => a.current_price - b.current_price);
-            return updatedProducts;
-          });
+          // Ordenar productos por precio (menor a mayor)
+          const sortedProducts = formattedProducts.sort((a, b) => a.current_price - b.current_price);
 
-          // Aplicar filtros de proveedores y rango de precio en tiempo real
-          filterProducts(query, priceRange, selectedProviders);
-        }
+          setProducts(sortedProducts);
+          setFilteredProducts(sortedProducts);
 
-        if (taskData.status === "completed") {
-          setPendingStores([]); // Limpia las tiendas pendientes cuando la búsqueda se completa
+          const maxPrice = Math.max(...sortedProducts.map((p) => p.current_price));
+          setPriceRange([0, maxPrice]);
+          setMaxPrice(maxPrice);
+          setPendingStores([]);
+
           return;  // Salir del bucle de polling
         } else {
           setPendingStores(taskData.pending_stores || []);
@@ -144,7 +142,7 @@ export default function Home() {
       } catch (err) {
         console.error("Polling error:", err);
         setError("Error retrieving search results.");
-        setPendingStores([]); // Detener la espera de tiendas
+        setPendingStores([]);
         return;
       }
 
@@ -157,19 +155,19 @@ export default function Home() {
   };
 
 
-  // Function to handle provider checkbox change
-  const handleProviderChange = (provider: string) => {
-    setSelectedProviders((prevProviders) => {
-      const updatedProviders = prevProviders.includes(provider)
-        ? prevProviders.filter((p) => p !== provider)  // Remove provider
-        : [...prevProviders, provider];  // Add provider
-
-      // Call filtering function after updating selected providers
-      filterProducts(query, priceRange, updatedProviders);
-
-      return updatedProviders;
-    });
-  };
+// Function to handle provider checkbox change
+const handleProviderChange = (provider: string) => {
+  setSelectedProviders((prevProviders) => {
+    const updatedProviders = prevProviders.includes(provider)
+      ? prevProviders.filter((p) => p !== provider)  // Remove provider
+      : [...prevProviders, provider];  // Add provider
+    
+    // Call filtering function after updating selected providers
+    filterProducts(query, priceRange, updatedProviders);
+    
+    return updatedProviders;
+  });
+};
 
 
   // Function to filter displayed products based on search query, price range, and selected providers
