@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import ResultsGrid from "./components/ResultsGrid";
 import FilterPanel from "./components/FiltersPanel";
 import SearchBar from "./components/SearchBar";
@@ -42,6 +42,20 @@ export default function Home() {
   const [lastProviders, setLastProviders] = useState<string[]>([]);  // Store last provider selection
 
 
+  useEffect(() => {
+    if (products.length > 0) {
+      const highestPrice = Math.max(...products.map((p) => p.current_price));
+      if (highestPrice !== maxPrice) {
+        setMaxPrice(highestPrice);
+        setPriceRange([0, highestPrice]);
+      }
+    } else {
+      setMaxPrice(100);
+      setPriceRange([0, 100]);
+    }
+  }, [products, maxPrice]);
+
+
 
   // Function to initiate product search via the API
   const handleSearch = async () => {
@@ -73,6 +87,9 @@ export default function Home() {
     setProducts([]);  // Clear previous results
     setPendingStores(DEFAULT_STORES);  // Assume all stores are pending initially
     setProgress(0);
+    setMaxPrice(100);  // Default to a reasonable max value before new search
+    setPriceRange([0, 100]); // Default range before search
+
 
     try {
       // Send search request to API
@@ -148,7 +165,17 @@ export default function Home() {
 
           setProducts(allProducts);
           setFilteredProducts(allProducts);
+
+          // Determine the new maximum price and update states
+          if (newProducts.length > 0) {
+            // Determine the new maximum price and update states
+            const newMaxPrice = Math.max(...allProducts.map((p) => p.current_price), 0);
+            setMaxPrice(newMaxPrice);
+            setPriceRange([0, newMaxPrice]);
+          }
+
         }
+
 
         if (taskData.status === "completed") {
           setPendingStores([]);
@@ -204,10 +231,10 @@ export default function Home() {
 
   // Handle price range updates from the slider
   const handlePriceRangeChange = (values: number[]) => {
-    const updatedRange: [number, number] = [values[0], values[1]];
-    setPriceRange(updatedRange);
-    filterProducts(query, updatedRange, selectedProviders);
+    setPriceRange([values[0], values[1]]);
+    filterProducts(query, [values[0], values[1]], selectedProviders);
   };
+
 
 
   // Format price display
