@@ -1,10 +1,17 @@
-type SearchBarProps = {
-  query: string;  // The current search query
-  setQuery: (query: string) => void;  // Function to update the search query
-  handleSearch: () => void;  // Function to handle the search button click
-  handleKeyDown: (e: React.KeyboardEvent<HTMLInputElement>) => void;  // Function to handle Enter key press
-  searching: boolean; // Indicates if a search is in progress
-};
+import React from 'react';
+import SearchConfig from './SearchConfig';
+
+interface SearchBarProps {
+  query: string;
+  setQuery: (query: string) => void;
+  handleSearch: () => void;
+  handleKeyDown: (e: React.KeyboardEvent) => void;
+  searching: boolean;
+  searchStores: string[];
+  onStoreChange: (store: string) => void;
+  productsPerStore: number;
+  onProductsPerStoreChange: (value: number) => void;
+}
 
 /**
  * Component to render a search bar
@@ -14,28 +21,46 @@ type SearchBarProps = {
  * @param handleSearch Function to handle the search button click
  * @param handleKeyDown Function to handle the Enter key press in the search bar
  * @param searching Indicates if a search is in progress
+ * @param searchStores Array of selected stores
+ * @param onStoreChange Function to handle store change
+ * @param productsPerStore Number of products per store
+ * @param onProductsPerStoreChange Function to handle products per store change
  */
-const SearchBar: React.FC<SearchBarProps> = ({ query, setQuery, handleSearch, handleKeyDown, searching }) => {
+const SearchBar: React.FC<SearchBarProps> = ({
+  query,
+  setQuery,
+  handleSearch,
+  handleKeyDown,
+  searching,
+  searchStores,
+  onStoreChange,
+  productsPerStore,
+  onProductsPerStoreChange,
+}) => {
   return (
-    <div className="top-0 z-10 bg-gray-100 p-4 shadow-md mb-4 rounded-md">
-      <div className="flex gap-4">
-        <input
-          type="text"
-          placeholder="Buscar productos..."
-          value={query}
-          onChange={(e) => setQuery(e.target.value.trimStart())}  // Update query state when typing
-          onKeyDown={handleKeyDown}  // Trigger search on Enter key press
-          className="border p-2 flex-1 rounded-md"
-          disabled={searching}  // Disable input when searching
-        />
-        <button
-          onClick={handleSearch}  // Trigger search on button click
-          disabled={!query.trim() || searching}  // Prevent empty and multiple searches
-          className={`px-4 py-2 rounded-md ${searching ? "bg-gray-400 cursor-not-allowed" : "bg-blue-500 text-white"}`}
-        >
-          {searching ? "Buscando..." : "Buscar"}
-        </button>
-      </div>
+    <div className="flex gap-2 mb-4">
+      <input
+        type="text"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={handleKeyDown}
+        placeholder="Buscar productos..."
+        className="flex-1 p-2 border rounded-lg focus:outline-none focus:border-blue-500"
+        disabled={searching}
+      />
+      <button
+        onClick={handleSearch}
+        disabled={searching}
+        className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600 disabled:bg-blue-300"
+      >
+        Buscar
+      </button>
+      <SearchConfig
+        selectedStores={searchStores}
+        onStoreChange={onStoreChange}
+        productsPerStore={productsPerStore}
+        onProductsPerStoreChange={onProductsPerStoreChange}
+      />
     </div>
   );
 };

@@ -20,6 +20,7 @@ type ResultsGridProps = {
   completedStores?: string[];  // List of stores that have returned results
   loading?: boolean;  // Indicates if results are still loading
   error?: string | null;  // Error message if fetching fails
+  searching: boolean;
 };
 
 const ResultsGrid: React.FC<ResultsGridProps> = ({
@@ -30,10 +31,29 @@ const ResultsGrid: React.FC<ResultsGridProps> = ({
   completedStores = [],
   loading,
   error,
+  searching,
 }) => {
+  // Show initial message before any search
+  if (!searchClicked && filteredProducts.length === 0) {
+    return (
+      <div className="text-center py-8 text-gray-600">
+        <p>Usa la barra de búsqueda para encontrar productos.</p>
+      </div>
+    );
+  }
+
+  // Show no results message only after search is complete and all stores have been processed
+  if (searchClicked && !searching && filteredProducts.length === 0 && pendingStores.length === 0 && completedStores.length > 0) {
+    return (
+      <div className="text-center py-8 text-gray-600">
+        <p>No se encontraron resultados para tu búsqueda.</p>
+      </div>
+    );
+  }
+
   return (
     <div className="h-[70vh] overflow-y-scroll grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 2xl:grid-cols-4 gap-4 p-4 bg-gray-100 rounded-md shadow-md">
-      {loading && (
+      {(searching || pendingStores.length > 0) && (
         <p className="text-lg font-semibold text-center text-blue-500 col-span-full mx-auto px-4">
           Buscando productos... Por favor, espere.
         </p>
@@ -42,18 +62,6 @@ const ResultsGrid: React.FC<ResultsGridProps> = ({
       {error && (
         <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
           Error: {error}
-        </p>
-      )}
-
-      {!loading && searchClicked && filteredProducts.length === 0 && (
-        <p className="text-lg font-semibold text-center text-red-500 col-span-full mx-auto px-4">
-          No se encontraron resultados para tu búsqueda.
-        </p>
-      )}
-
-      {!searchClicked && (
-        <p className="text-lg font-semibold text-center text-gray-600 col-span-full mx-auto px-4">
-          Usa la barra de búsqueda para encontrar productos.
         </p>
       )}
 
@@ -68,7 +76,7 @@ const ResultsGrid: React.FC<ResultsGridProps> = ({
         </p>
       )}
 
-      {completedStores.length > 0 && (
+      {completedStores.length > 0 && filteredProducts.length > 0 && (
         <p className="text-sm text-green-500 col-span-full text-center">
           Resultados disponibles de: {completedStores.join(", ")}
         </p>

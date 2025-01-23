@@ -7,6 +7,7 @@ import SearchBar from "./components/SearchBar";
 import MessageDialog from "./components/MessageDialog";
 import ProviderStatusDialog from "./components/ProviderStatusDialog";
 import SearchProgress from "./components/SearchProgress";
+import SearchConfig from './components/SearchConfig';
 
 // Type definition for Product, ensuring consistency with the API response
 type Product = {
@@ -16,12 +17,41 @@ type Product = {
   image_url: string;  // URL of the product image
   current_price: number;  // Current price (in EUR)
   original_price: number | null;  // Original price (null if no discount)
-  description: string;  // Product description (fallback to "No description available" if missing)
+  description: string;  // Product description
 };
+
+// API Response Types
+interface ApiProduct {
+  name: string;
+  urls: {
+    product: string;
+    image: string;
+  };
+  price: {
+    current: number;
+    original: number | null;
+  };
+  description?: string;
+}
+
+interface ApiResponse {
+  status: 'completed' | 'processing';
+  stores?: { [key: string]: ApiProduct[] };
+  task_id?: string;
+  pending_stores?: string[];
+}
 
 // Define the API endpoint and default stores for search
 const API_BASE_URL = "http://localhost:8080";
 const DEFAULT_STORES = ["leroy", "bauhaus", "bricodepot"];
+
+// Helper function to determine store from URL
+const getStoreFromUrl = (url: string): string => {
+  if (url.includes('leroymerlin.es')) return 'leroy';
+  if (url.includes('bauhaus.es')) return 'bauhaus';
+  if (url.includes('bricodepot.es')) return 'bricodepot';
+  return 'unknown';
+};
 
 export default function Home() {
   // State for managing product data
@@ -41,6 +71,15 @@ export default function Home() {
   const [lastQuery, setLastQuery] = useState<string>("");  // Store last search query
   const [lastProviders, setLastProviders] = useState<string[]>([]);  // Store last provider selection
 
+  // State for search configuration
+  const [searchStores, setSearchStores] = useState<string[]>(DEFAULT_STORES);
+  const [productsPerStore, setProductsPerStore] = useState<number>(7);
+  // State for filtering results
+  const [filterStores, setFilterStores] = useState<string[]>(DEFAULT_STORES);
+
+  // New state for offers filter and sort order
+  const [showOnlyOffers, setShowOnlyOffers] = useState(false);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
 
   useEffect(() => {
     if (products.length > 0) {
@@ -55,9 +94,70 @@ export default function Home() {
     }
   }, [products, maxPrice]);
 
+  // Handle store selection for search
+  const handleSearchStoreChange = (store: string) => {
+    setSearchStores(prev => 
+      prev.includes(store) 
+        ? prev.filter(s => s !== store)
+        : [...prev, store]
+    );
+  };
 
+  // Handle products per store change
+  const handleProductsPerStoreChange = (value: number) => {
+    setProductsPerStore(value);
+  };
 
-  // Function to initiate product search via the API
+  // Handle store selection for filtering
+  const handleFilterStoreChange = (store: string) => {
+    const updated = filterStores.includes(store)
+      ? filterStores.filter(s => s !== store)
+      : [...filterStores, store];
+    
+    setFilterStores(updated);
+    filterProducts(query, priceRange, updated);
+  };
+
+  // Function to filter displayed products
+  const filterProducts = (searchQuery: string, range: [number, number], stores: string[]) => {
+    if (!products.length) return;
+    
+    // If no stores are selected, show all products
+    if (stores.length === 0) {
+      setFilteredProducts([]);
+      return;
+    }
+    
+    let filtered = products.filter(product => {
+      const matchesStore = stores.includes(product.store);
+      const matchesPrice = product.current_price >= range[0] && product.current_price <= range[1];
+      const matchesOffers = !showOnlyOffers || (showOnlyOffers && product.original_price !== null);
+      
+      return matchesStore && matchesPrice && matchesOffers;
+    });
+
+    // Apply sorting if selected
+    if (sortOrder) {
+      filtered.sort((a, b) => {
+        if (sortOrder === 'asc') {
+          return a.current_price - b.current_price;
+        } else {
+          return b.current_price - a.current_price;
+        }
+      });
+    }
+
+    setFilteredProducts(filtered);
+  };
+
+  useEffect(() => {
+    // Apply filters whenever products change
+    if (products.length > 0) {
+      filterProducts(query, priceRange, filterStores);
+    }
+  }, [products]);
+
+  // Update handleSearch to include productsPerStore
   const handleSearch = async () => {
     if (searching) {
       setError("A search is already in progress. Please wait for it to finish.");
@@ -69,57 +169,83 @@ export default function Home() {
       return;
     }
 
-    // Avoid duplicate searches by checking if query and providers are the same
-    if (query === lastQuery && selectedProviders.sort().join(",") === lastProviders.sort().join(",")) {
-      setError("This search has already been performed.");
-      return;
-    }
-
-    // Update last search state
-    setLastQuery(query);
-    setLastProviders(selectedProviders);
-
     setSearchClicked(true);
     setError(null);
     setLoading(true);
-    setSearching(true);  // Block new searches
-    setStopSearch(false);  // Reset stop state
-    setProducts([]);  // Clear previous results
-    setPendingStores(DEFAULT_STORES);  // Assume all stores are pending initially
+    setSearching(true);
+    setStopSearch(false);
+    setProducts([]);
+    setPendingStores(searchStores);
     setProgress(0);
-    setMaxPrice(100);  // Default to a reasonable max value before new search
-    setPriceRange([0, 100]); // Default range before search
-
+    setMaxPrice(100);
+    setPriceRange([0, 100]);
+    // Initialize filter stores with search stores
+    setFilterStores(searchStores);
 
     try {
-      // Send search request to API
       const response = await fetch(`${API_BASE_URL}/search`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query,
-          stores: DEFAULT_STORES,
-          num_products: 7,  // Limiting to 5 products per store
+          stores: searchStores,
+          num_products: productsPerStore,
         }),
       });
 
       if (!response.ok) throw new Error("Failed to initiate search");
 
-      const { task_id } = await response.json();  // Extract task ID from response
-      await pollForResults(task_id);  // Start polling for results
+      const data: ApiResponse = await response.json();
+      
+      // Check if we got immediate results or a task ID
+      if (data.status === "completed" && data.stores) {
+        // Process immediate results
+        const newProducts: Product[] = Object.entries(data.stores).flatMap(([_, items]) =>
+          items.map((product: ApiProduct) => ({
+            name: product.name,
+            store: getStoreFromUrl(product.urls.product),  // Use URL to determine store
+            url: product.urls.product,
+            image_url: product.urls.image,
+            current_price: product.price.current,
+            original_price: product.price.original,
+            description: product.description || product.name,
+          }))
+        );
+
+        // Sort products by price
+        newProducts.sort((a: Product, b: Product) => a.current_price - b.current_price);
+        
+        setProducts(newProducts);
+        setFilteredProducts(newProducts);
+        
+        // Update price range
+        if (newProducts.length > 0) {
+          const newMaxPrice = Math.max(...newProducts.map((p: Product) => p.current_price));
+          setMaxPrice(newMaxPrice);
+          setPriceRange([0, newMaxPrice]);
+        }
+        
+        setProgress(100);
+        setPendingStores([]);
+      } else if (data.task_id) {
+        // Start polling for results if we got a task ID
+        await pollForResults(data.task_id);
+      } else {
+        throw new Error("Invalid response from server");
+      }
     } catch (err) {
       setError("Error retrieving products. Please try again.");
       console.error("Search error:", err);
     } finally {
       setLoading(false);
-      setSearching(false);  // Allow new searches
+      setSearching(false);
     }
   };
 
   // Function to poll the API for search results using the task ID
   const pollForResults = async (taskId: string) => {
-    const pollingInterval = 3000;  // 3 segundos entre cada consulta
-    const timeout = 90000;  // Detener después de 1.5 minutos
+    const pollingInterval = 3000;
+    const timeout = 90000;
     let elapsedTime = 0;
     let allProducts: Product[] = [];
 
@@ -133,31 +259,30 @@ export default function Home() {
         const response = await fetch(`${API_BASE_URL}/task/${taskId}`);
         if (!response.ok) throw new Error("Failed to retrieve search results");
 
-        const taskData = await response.json();
+        const taskData: ApiResponse = await response.json();
 
-        // Update progress
+        // Update progress based on completed stores
         const completedStores = DEFAULT_STORES.length - (taskData.pending_stores?.length || 0);
         setProgress(Math.round((completedStores / DEFAULT_STORES.length) * 100));
 
         if (taskData.stores) {
           // Process and store new products from API response
-          const newProducts = Object.entries(taskData.stores).flatMap(([store, items]: any) =>
-            items.map((product: any) => ({
+          const newProducts: Product[] = Object.entries(taskData.stores).flatMap(([_, items]) =>
+            items.map((product: ApiProduct) => ({
               name: product.name,
-              store: store,
+              store: getStoreFromUrl(product.urls.product),  // Determine store from URL
               url: product.urls.product,
               image_url: product.urls.image,
               current_price: product.price.current,
-              original_price: product.price.original ?? null,
-              description: product.description && product.description !== "No description available"
-                ? product.description
-                : product.name, // Use name if no description
+              original_price: product.price.original,
+              description: product.description || product.name,
             }))
           );
 
           // Merge products and remove duplicates
           allProducts = [...allProducts, ...newProducts].filter(
-            (product, index, self) => index === self.findIndex((p) => p.url === product.url)
+            (product, index, self) => 
+              index === self.findIndex((p) => p.url === product.url)
           );
 
           // Sort the products by price (ascending order)
@@ -166,22 +291,28 @@ export default function Home() {
           setProducts(allProducts);
           setFilteredProducts(allProducts);
 
-          // Determine the new maximum price and update states
-          if (newProducts.length > 0) {
-            // Determine the new maximum price and update states
-            const newMaxPrice = Math.max(...allProducts.map((p) => p.current_price), 0);
+          // Update price range if we have products
+          if (allProducts.length > 0) {
+            const newMaxPrice = Math.max(...allProducts.map((p) => p.current_price));
             setMaxPrice(newMaxPrice);
             setPriceRange([0, newMaxPrice]);
           }
-
         }
 
-
-        if (taskData.status === "completed") {
+        // Check if search is complete
+        if (taskData.status === "completed" || taskData.pending_stores?.length === 0) {
           setPendingStores([]);
+          setProgress(100);
           return;  // Exit polling when search is complete
         } else {
           setPendingStores(taskData.pending_stores || []);
+        }
+
+        // If all stores returned results immediately (cache hit), exit polling
+        if (completedStores === DEFAULT_STORES.length) {
+          setPendingStores([]);
+          setProgress(100);
+          return;
         }
       } catch (err) {
         console.error("Polling error:", err);
@@ -190,52 +321,27 @@ export default function Home() {
         return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, pollingInterval));
-      elapsedTime += pollingInterval;
+      // Only wait if we need to continue polling
+      if (elapsedTime < timeout) {
+        await new Promise((resolve) => setTimeout(resolve, pollingInterval));
+        elapsedTime += pollingInterval;
+      }
     }
 
     // Display whatever results were found once timeout is reached
-    setError("Search time completed. Displaying found results.");
+    if (elapsedTime >= timeout) {
+      setError("Search time completed. Displaying found results.");
+    }
     setPendingStores([]);
     setSearching(false);
   };
 
-
-
-  // Function to handle provider checkbox change
-  const handleProviderChange = (provider: string) => {
-    setSelectedProviders((prevProviders) => {
-      const updatedProviders = prevProviders.includes(provider)
-        ? prevProviders.filter((p) => p !== provider)  // Remove provider
-        : [...prevProviders, provider];  // Add provider
-
-      // Call filtering function after updating selected providers
-      filterProducts(query, priceRange, updatedProviders);
-
-      return updatedProviders;
-    });
-  };
-
-
-  // Function to filter displayed products based on search query, price range, and selected providers
-  const filterProducts = (query: string, range: [number, number], providers: string[]) => {
-    const filtered = products.filter(
-      (product) =>
-        product.name.toLowerCase().includes(query.toLowerCase()) &&
-        product.current_price >= range[0] &&
-        product.current_price <= range[1] &&
-        providers.includes(product.store) // Filter by selected providers
-    );
-    setFilteredProducts(filtered);
-  };
-
   // Handle price range updates from the slider
   const handlePriceRangeChange = (values: number[]) => {
-    setPriceRange([values[0], values[1]]);
-    filterProducts(query, [values[0], values[1]], selectedProviders);
+    const newRange: [number, number] = [values[0], values[1]];
+    setPriceRange(newRange);
+    filterProducts(query, newRange, filterStores);
   };
-
-
 
   // Format price display
   const formatPrice = (price: number) =>
@@ -243,6 +349,18 @@ export default function Home() {
       style: "currency",
       currency: "EUR",
     }).format(price);
+
+  // Toggle offers filter
+  const toggleOffers = () => {
+    setShowOnlyOffers(!showOnlyOffers);
+    filterProducts(query, priceRange, filterStores);
+  };
+
+  // Handle sort order change
+  const handleSortChange = (order: 'asc' | 'desc') => {
+    setSortOrder(order);
+    filterProducts(query, priceRange, filterStores);
+  };
 
   return (
     <div className="flex flex-col md:flex-row gap-4 p-4">
@@ -252,8 +370,12 @@ export default function Home() {
         priceRange={priceRange}
         formatPrice={formatPrice}
         handlePriceRangeChange={handlePriceRangeChange}
-        selectedProviders={selectedProviders}
-        handleProviderChange={handleProviderChange}
+        selectedProviders={filterStores}
+        handleProviderChange={handleFilterStoreChange}
+        showOnlyOffers={showOnlyOffers}
+        toggleOffers={toggleOffers}
+        sortOrder={sortOrder}
+        handleSortChange={handleSortChange}
       />
 
       {/* Main Content */}
@@ -264,6 +386,10 @@ export default function Home() {
           handleSearch={handleSearch}
           handleKeyDown={(e) => e.key === "Enter" && handleSearch()}
           searching={searching}
+          searchStores={searchStores}
+          onStoreChange={handleSearchStoreChange}
+          productsPerStore={productsPerStore}
+          onProductsPerStoreChange={handleProductsPerStoreChange}
         />
 
         {/* Progress Indicator */}
