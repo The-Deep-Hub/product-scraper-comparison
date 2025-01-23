@@ -31,7 +31,7 @@ const SearchProgress: React.FC<{ duration: number }> = ({ duration }) => {
           />
         </svg>
       </div>
-      <span className="text-sm font-medium text-gray-700">{Math.round(progress)}% Searching...</span>
+      <span className="text-sm font-medium text-gray-700">{Math.round(progress)}% Buscando...</span>
     </div>
   );
 };

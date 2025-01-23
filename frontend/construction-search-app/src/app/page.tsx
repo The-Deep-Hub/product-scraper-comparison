@@ -79,7 +79,7 @@ export default function Home() {
 
   // New state for offers filter and sort order
   const [showOnlyOffers, setShowOnlyOffers] = useState(false);
-  const [sortOrder, setSortOrder] = useState<'asc' | 'desc' | null>(null);
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc');  // Default to ascending
 
   useEffect(() => {
     if (products.length > 0) {
@@ -115,14 +115,19 @@ export default function Home() {
       : [...filterStores, store];
     
     setFilterStores(updated);
-    filterProducts(query, priceRange, updated);
+    filterProducts(query, priceRange, updated, showOnlyOffers, sortOrder);
   };
 
   // Function to filter displayed products
-  const filterProducts = (searchQuery: string, range: [number, number], stores: string[]) => {
+  const filterProducts = (
+    searchQuery: string, 
+    range: [number, number], 
+    stores: string[],
+    offersOnly: boolean,
+    currentSortOrder: 'asc' | 'desc'
+  ) => {
     if (!products.length) return;
     
-    // If no stores are selected, show all products
     if (stores.length === 0) {
       setFilteredProducts([]);
       return;
@@ -131,15 +136,15 @@ export default function Home() {
     let filtered = products.filter(product => {
       const matchesStore = stores.includes(product.store);
       const matchesPrice = product.current_price >= range[0] && product.current_price <= range[1];
-      const matchesOffers = !showOnlyOffers || (showOnlyOffers && product.original_price !== null);
+      const matchesOffers = !offersOnly || (offersOnly && product.original_price !== null);
       
       return matchesStore && matchesPrice && matchesOffers;
     });
 
     // Apply sorting if selected
-    if (sortOrder) {
+    if (currentSortOrder) {
       filtered.sort((a, b) => {
-        if (sortOrder === 'asc') {
+        if (currentSortOrder === 'asc') {
           return a.current_price - b.current_price;
         } else {
           return b.current_price - a.current_price;
@@ -151,11 +156,10 @@ export default function Home() {
   };
 
   useEffect(() => {
-    // Apply filters whenever products change
     if (products.length > 0) {
-      filterProducts(query, priceRange, filterStores);
+      filterProducts(query, priceRange, filterStores, showOnlyOffers, sortOrder);
     }
-  }, [products]);
+  }, [products, query, priceRange, filterStores, showOnlyOffers, sortOrder]);
 
   // Update handleSearch to include productsPerStore
   const handleSearch = async () => {
@@ -340,7 +344,7 @@ export default function Home() {
   const handlePriceRangeChange = (values: number[]) => {
     const newRange: [number, number] = [values[0], values[1]];
     setPriceRange(newRange);
-    filterProducts(query, newRange, filterStores);
+    filterProducts(query, newRange, filterStores, showOnlyOffers, sortOrder);
   };
 
   // Format price display
@@ -352,14 +356,16 @@ export default function Home() {
 
   // Toggle offers filter
   const toggleOffers = () => {
-    setShowOnlyOffers(!showOnlyOffers);
-    filterProducts(query, priceRange, filterStores);
+    const newShowOnlyOffers = !showOnlyOffers;
+    setShowOnlyOffers(newShowOnlyOffers);
+    // Immediately filter products with the new value
+    filterProducts(query, priceRange, filterStores, newShowOnlyOffers, sortOrder);
   };
 
   // Handle sort order change
   const handleSortChange = (order: 'asc' | 'desc') => {
     setSortOrder(order);
-    filterProducts(query, priceRange, filterStores);
+    filterProducts(query, priceRange, filterStores, showOnlyOffers, order);
   };
 
   return (
@@ -401,7 +407,7 @@ export default function Home() {
         {pendingStores.length > 0 && <ProviderStatusDialog pendingStores={pendingStores} completedStores={DEFAULT_STORES.filter((store) => !pendingStores.includes(store))} />}
 
         {/* Results Grid */}
-        <ResultsGrid filteredProducts={filteredProducts} searchClicked={searchClicked} formatPrice={formatPrice} />
+        <ResultsGrid filteredProducts={filteredProducts} searchClicked={searchClicked} formatPrice={formatPrice} searching={false} />
       </main>
     </div>
   );

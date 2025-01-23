@@ -49,9 +49,8 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
           values={priceRange}
           onChange={handlePriceRangeChange}
           renderTrack={({ props, children }) => {
-            const { key, ...restProps } = props;
             return (
-              <div key={key} {...restProps} className="w-full h-2 bg-gray-300 rounded-md relative">
+              <div {...props} className="w-full h-2 bg-gray-300 rounded-md relative">
                 <div
                   style={{
                     position: "absolute",
@@ -90,10 +89,10 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
       {/* Sort Order */}
       <div className="mb-6">
         <button
-          onClick={() => handleSortChange(sortOrder === 'desc' ? 'asc' : 'desc')}
+          onClick={() => handleSortChange(sortOrder === 'asc' ? 'desc' : 'asc')}
           className="w-full px-4 py-2 text-sm rounded-md bg-gray-200 hover:bg-gray-300"
         >
-          Ordenar: {sortOrder === 'desc' ? 'Mayor a menor' : 'Menor a mayor'}
+          Ordenar: {sortOrder ? (sortOrder === 'desc' ? 'Mayor a menor' : 'Menor a mayor') : 'Menor a mayor'}
         </button>
       </div>
 
@@ -120,7 +119,9 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
       <div className="mb-6">
         <button
           onClick={toggleOffers}
-          className="w-full px-4 py-2 text-sm rounded-md bg-gray-200 hover:bg-gray-300"
+          className={`w-full px-4 py-2 text-sm rounded-md ${
+            showOnlyOffers ? 'bg-blue-500 text-white' : 'bg-gray-200 hover:bg-gray-300'
+          }`}
         >
           {showOnlyOffers ? 'Ver todos los productos' : 'Solo ofertas'}
         </button>

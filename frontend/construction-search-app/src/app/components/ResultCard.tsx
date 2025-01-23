@@ -57,7 +57,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ product, formatPrice }) => {
           )}
           {/* Product description */}
           <p className="text-sm text-gray-600 mt-2 line-clamp-3">
-            {product.description || "No description available"}
+            {product.description || "Sin descripción disponible"}
           </p>
         </div>
 
@@ -66,7 +66,7 @@ const ResultCard: React.FC<ResultCardProps> = ({ product, formatPrice }) => {
           className="mt-4 bg-blue-500 text-white py-2 px-4 rounded-md w-full"
           onClick={() => window.open(product.url, "_blank")}
         >
-          Purchase on Site
+          Ver en tienda
         </button>
       </div>
     </div>
