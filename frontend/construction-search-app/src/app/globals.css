@@ -3,132 +3,181 @@
 @tailwind utilities;
 
 :root {
-  --background: #ffffff; /* Light mode background */
-  --foreground: #171717; /* Light mode text */
-
-  --primary: #34a853; /* Primary color for actions */
-  --secondary: #ff0000; /* Secondary color for warnings */
-  --accent: #ffc107; /* Accent color for highlights */
-  --muted: #6c757d; /* Muted text color */
+  --background: #ffffff;
+  --foreground: #1a1a1a;
+  --primary: #4CAF50;
+  --primary-hover: #45a049;
+  --secondary: #2196F3;
+  --accent: #ff9800;
+  --muted: #757575;
+  --border: #e0e0e0;
+  --card: #ffffff;
+  --card-hover: #f5f5f5;
+  --shadow: rgba(0, 0, 0, 0.1);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a; /* Dark mode background */
-    --foreground: #ededed; /* Dark mode text */
-  }
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-body {
-  font-family: "Geist Sans", Arial, sans-serif; /* Apply custom font */
-  color: var(--foreground);
+html, body {
+  min-height: 100vh;
   background-color: var(--background);
 }
 
-h1,
-h2,
-h3,
-h4,
-h5,
-h6 {
-  font-family: "Geist Sans", sans-serif;
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  color: var(--foreground);
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  min-height: 100vh;
+  background-color: var(--background);
+  padding: 2rem 0;
+}
+
+.container {
+  width: min(100% - 2rem, 1200px);
+  margin-inline: auto;
+  padding: 1rem;
+  background-color: var(--background);
 }
 
 button {
-  font-family: "Geist Sans", sans-serif;
-  font-weight: bold;
+  font-family: inherit;
+  font-weight: 500;
+  padding: 0.5rem 1rem;
+  border-radius: 0.5rem;
+  border: none;
+  background-color: var(--primary);
+  color: white;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   cursor: pointer;
-  transition: background-color 0.3s ease, transform 0.2s ease;
 }
 
 button:hover {
-  background-color: var(--primary-hover, #22863a); /* Define un color de hover */
-  transform: scale(1.05); /* Efecto de agrandar ligeramente */
+  background-color: var(--primary-hover);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 6px -1px var(--shadow);
 }
 
-input,
-textarea {
-  font-family: "Geist Sans", sans-serif;
+button:active {
+  transform: translateY(0);
 }
 
-.container {
-  max-width: 1200px;
-  margin: 0 auto;
+input, textarea {
+  font-family: inherit;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background-color: var(--card);
+  color: var(--foreground);
+  transition: border-color 0.2s ease;
+}
+
+input:focus, textarea:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(76, 175, 80, 0.2);
 }
 
 .resultCard {
-  transition: background-color 0.3s ease, transform 0.2s ease;
+  background-color: var(--card);
+  border-radius: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  margin-bottom: 1rem;
 }
 
 .resultCard:hover {
-  /*background-color: #aad8b0; /* Color ligeramente diferente */
-  /* transform: translateY(-5px); Eleva ligeramente la tarjeta */
-  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2); /* Añade sombra */
-}
-
-
-/* Default styles for small screens */
-.container {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 auto;
-  padding-left: 1rem; /* Small padding for mobile */
-  padding-right: 1rem;
-}
-
-/* Increase width and padding for tablets */
-@media (min-width: 640px) {
-  .container {
-    max-width: 90%;
-    padding-left: 2rem;
-    padding-right: 2rem;
-  }
-}
-
-/* Increase width for medium screens */
-@media (min-width: 1024px) {
-  .container {
-    max-width: 85%;
-    padding-left: 4rem;
-    padding-right: 4rem;
-  }
-}
-
-/* Full width for larger screens */
-@media (min-width: 1440px) {
-  .container {
-    max-width: 75%;
-    padding-left: 6rem;
-    padding-right: 6rem;
-  }
-}
-
-/* Ultra-wide screens */
-@media (min-width: 1920px) {
-  .container {
-    max-width: 70%;
-    padding-left: 8rem;
-    padding-right: 8rem;
-  }
-}
-
-img {
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  object-fit: contain; /* Maintain aspect ratio */
-  background-color: white; /* Ensure clean background */
-}
-
-.resultCard {
-  background-color: #ededed;
+  transform: translateY(-4px);
+  background-color: var(--card-hover);
+  box-shadow: 0 10px 15px -3px var(--shadow);
 }
 
 .resultCard img {
-  object-fit: contain;
-  background-color: white;
   width: 100%;
-  height: 100%;
-  padding: 3%;
-  margin-top: 5%;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0.5rem;
+  background-color: white;
+  padding: 0.5rem;
+}
+
+/* Responsive Design */
+@media (min-width: 640px) {
+  .container {
+    padding: 1.5rem;
+  }
+}
+
+@media (min-width: 768px) {
+  .container {
+    padding: 2rem;
+  }
+}
+
+@media (min-width: 1024px) {
+  .container {
+    padding: 2.5rem;
+  }
+}
+
+/* Estilos para el layout principal */
+.app-layout {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background-color: var(--background);
+}
+
+.main-content {
+  flex: 1;
+  display: flex;
+  gap: 2rem;
+  padding: 2rem;
+  background-color: var(--background);
+}
+
+.sidebar {
+  width: 300px;
+  flex-shrink: 0;
+}
+
+.results-container {
+  flex: 1;
+}
+
+/* Estilos para los filtros */
+.filters-panel {
+  background-color: white;
+  border-radius: 1rem;
+  padding: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
+}
+
+.filter-group {
+  margin-bottom: 1.5rem;
+}
+
+.filter-group label {
+  display: block;
+  font-weight: 500;
+  margin-bottom: 0.5rem;
+  color: var(--foreground);
+}
+
+/* Grid de resultados */
+.results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 1.5rem;
+  padding: 1rem;
 }
