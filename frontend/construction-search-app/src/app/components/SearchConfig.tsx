@@ -53,39 +53,39 @@ const SearchConfig: React.FC<SearchConfigProps> = ({
 
       {isOpen && (
         <div className="absolute right-0 mt-2 bg-white rounded-lg shadow-lg border border-gray-200 p-4 z-50 min-w-[250px]">
-          <div className="space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold mb-2">Seleccionar Tiendas:</h3>
-              {STORE_OPTIONS.map((store) => (
-                <div key={store.key} className="flex items-center space-x-2 mb-2">
-                  <input
-                    type="checkbox"
-                    id={`search-${store.key}`}
-                    checked={selectedStores.includes(store.key)}
-                    onChange={() => onStoreChange(store.key)}
-                    className="w-4 h-4 accent-blue-500"
-                  />
-                  <label htmlFor={`search-${store.key}`} className="text-sm">
-                    {store.label}
-                  </label>
-                </div>
-              ))}
-            </div>
-
-            <div>
-              <h3 className="text-sm font-semibold mb-2">Productos por tienda:</h3>
-              <input
-                type="number"
-                min="1"
-                max="20"
-                value={productsPerStore}
-                onChange={(e) => onProductsPerStoreChange(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
-                className="w-full px-2 py-1 border rounded text-sm"
-              />
-              <p className="text-xs text-gray-500 mt-1">Máximo 20 productos por tienda</p>
-            </div>
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-sm font-semibold mb-2 text-gray-900">Seleccionar Tiendas:</h3>
+            {STORE_OPTIONS.map((store) => (
+              <div key={store.key} className="flex items-center space-x-2 mb-2">
+                <input
+                  type="checkbox"
+                  id={`search-${store.key}`}
+                  checked={selectedStores.includes(store.key)}
+                  onChange={() => onStoreChange(store.key)}
+                  className="w-4 h-4 accent-blue-500"
+                />
+                <label htmlFor={`search-${store.key}`} className="text-sm text-gray-900">
+                  {store.label}
+                </label>
+              </div>
+            ))}
+          </div>
+      
+          <div>
+            <h3 className="text-sm font-semibold mb-2 text-gray-900">Productos por tienda:</h3>
+            <input
+              type="number"
+              min="1"
+              max="20"
+              value={productsPerStore}
+              onChange={(e) => onProductsPerStoreChange(Math.max(1, Math.min(20, parseInt(e.target.value) || 1)))}
+              className="w-full px-2 py-1 border rounded text-sm text-gray-900"
+            />
+            <p className="text-xs text-gray-500 mt-1">Máximo 20 productos por tienda</p>
           </div>
         </div>
+      </div>
       )}
     </div>
   );

@@ -46,9 +46,9 @@
 }
 
 body {
+  background-color: white;
   font-family: 'Inter', system-ui, -apple-system, sans-serif;
   color: var(--foreground);
-  background-color: var(--background);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }

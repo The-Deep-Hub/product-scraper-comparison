@@ -1,3 +1,5 @@
+'use client';
+import { useState } from 'react';
 import { Range } from "react-range";
 
 // Props type definition for FilterPanel component
@@ -26,6 +28,8 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
   sortOrder,
   handleSortChange
 }) => {
+  const [isOpen, setIsOpen] = useState(true);
+
   // Provider options with real names
   const PROVIDER_OPTIONS = [
     { key: "leroy", label: "Leroy Merlin" },
@@ -34,108 +38,133 @@ const FilterPanel: React.FC<FilterPanelProps> = ({
   ];
 
   return (
-    <aside className="sticky top-4 w-full md:w-1/4 bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700">
-      <h2 className="text-2xl font-bold mb-8 text-gray-900 dark:text-white tracking-tight">Filtros</h2>
+    <aside className="w-full md:w-1/4">
+      {/* Botón desplegable */}
+      <button
+        onClick={() => setIsOpen(!isOpen)}
+        className="w-full mb-4 px-6 py-3 bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+      >
+        <span className="text-lg font-semibold text-gray-900 dark:text-white">Filtros</span>
+        <svg
+          className={`w-5 h-5 text-gray-500 transition-transform duration-300 ${
+            isOpen ? 'rotate-180' : ''
+          }`}
+          fill="none"
+          viewBox="0 0 24 24"
+          stroke="currentColor"
+        >
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+        </svg>
+      </button>
 
-      {/* Price Range Filter */}
-      <div className="mb-10">
-        <label className="block text-base font-semibold mb-4 text-gray-800 dark:text-gray-100">
-          Rango de precio:
-        </label>
+      {/* Panel de filtros desplegable */}
+      <div
+        className={`transition-all duration-300 ease-in-out overflow-hidden ${
+          isOpen ? 'max-h-[2000px] opacity-100' : 'max-h-0 opacity-0'
+        }`}
+      >
+        <div className="bg-white dark:bg-gray-800 p-8 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700">
+          {/* Price Range Filter */}
+          <div className="mb-10">
+            <label className="block text-base font-semibold mb-4 text-gray-900 dark:text-gray-100">
+              Rango de precio:
+            </label>
 
-        {/* Price range slider component */}
-        <Range
-          step={1}
-          min={0}
-          max={maxPrice}
-          values={priceRange}
-          onChange={handlePriceRangeChange}
-          renderTrack={({ props, children }) => {
-            const { key, ...restProps } = props;
-            return (
-              <div key={key} {...restProps} className="w-full h-3 bg-gray-200 dark:bg-gray-600 rounded-lg relative">
-                <div
-                  style={{
-                    position: "absolute",
-                    left: `${((priceRange[0] - 0) / maxPrice) * 100}%`,
-                    right: `${100 - ((priceRange[1] - 0) / maxPrice) * 100}%`,
-                    backgroundColor: "#4CAF50",
-                    height: "100%",
-                    borderRadius: "0.5rem",
-                  }}
+            {/* Price range slider component */}
+            <Range
+              step={1}
+              min={0}
+              max={maxPrice}
+              values={priceRange}
+              onChange={handlePriceRangeChange}
+              renderTrack={({ props, children }) => {
+                const { key, ...restProps } = props;
+                return (
+                  <div key={key} {...restProps} className="w-full h-3 bg-gray-200 dark:bg-gray-600 rounded-lg relative">
+                    <div
+                      style={{
+                        position: "absolute",
+                        left: `${((priceRange[0] - 0) / maxPrice) * 100}%`,
+                        right: `${100 - ((priceRange[1] - 0) / maxPrice) * 100}%`,
+                        backgroundColor: "#4CAF50",
+                        height: "100%",
+                        borderRadius: "0.5rem",
+                      }}
+                    />
+                    {children}
+                  </div>
+                );
+              }}
+              renderThumb={({ props, isDragged }) => {
+                const { key, ...restProps } = props;
+                return (
+                  <div
+                    key={key}
+                    {...restProps}
+                    className={`w-5 h-5 ${
+                      isDragged ? "bg-green-700" : "bg-green-500"
+                    } rounded-full shadow-lg border-2 border-white dark:border-gray-800`}
+                  />
+                );
+              }}
+            />
+
+            {/* Display selected price range */}
+            <div className="flex justify-between mt-4 text-sm font-medium text-gray-700 dark:text-gray-200">
+              <span>Mín: {formatPrice(priceRange[0])}</span>
+              <span>Máx: {formatPrice(priceRange[1])}</span>
+            </div>
+          </div>
+
+          {/* Sort Order */}
+          <div className="mb-10">
+            <button
+              onClick={() => handleSortChange(sortOrder === 'desc' ? 'asc' : 'desc')}
+              className="w-full px-5 py-3.5 text-sm font-semibold rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600 transition-all duration-200"
+            >
+              Ordenar: {sortOrder === 'desc' ? 'Mayor a menor' : 'Menor a mayor'}
+            </button>
+          </div>
+
+          {/* Provider Filter */}
+          <div className="mb-10">
+            <label className="block text-base font-semibold mb-5 text-gray-900 dark:text-gray-100">
+              Proveedores:
+            </label>
+            {PROVIDER_OPTIONS.map((provider) => (
+              <div key={provider.key} className="flex items-center mb-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200">
+                <input
+                  type="checkbox"
+                  id={provider.key}
+                  checked={selectedProviders.includes(provider.key)}
+                  onChange={() => handleProviderChange(provider.key)}
+                  className="w-5 h-5 mr-4 accent-blue-600 cursor-pointer rounded"
                 />
-                {children}
+                <label htmlFor={provider.key} className="text-gray-900 dark:text-gray-200 cursor-pointer select-none">
+                  {provider.label}
+                </label>
               </div>
-            );
-          }}
-          renderThumb={({ props, isDragged }) => {
-            const { key, ...restProps } = props;
-            return (
-              <div
-                key={key}
-                {...restProps}
-                className={`w-5 h-5 ${
-                  isDragged ? "bg-green-700" : "bg-green-500"
-                } rounded-full shadow-lg border-2 border-white dark:border-gray-800`}
-              />
-            );
-          }}
-        />
+            ))}
+          </div>
 
-        {/* Display selected price range */}
-        <div className="flex justify-between mt-4 text-sm font-medium text-gray-700 dark:text-gray-200">
-          <span>Mín: {formatPrice(priceRange[0])}</span>
-          <span>Máx: {formatPrice(priceRange[1])}</span>
+          {/* Offers Filter */}
+          <div className="mb-8">
+            <button
+              onClick={toggleOffers}
+              className="w-full px-5 py-3.5 text-sm font-semibold rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all duration-200"
+            >
+              {showOnlyOffers ? 'Ver todos los productos' : 'Solo ofertas'}
+            </button>
+          </div>
+
+          {/* Message when no products are available */}
+          {maxPrice === 0 && (
+            <p className="text-sm text-gray-500 dark:text-gray-400 mt-6 text-center italic">
+              No hay productos disponibles para filtrar.
+            </p>
+          )}
         </div>
       </div>
-
-      {/* Sort Order */}
-      <div className="mb-10">
-        <button
-          onClick={() => handleSortChange(sortOrder === 'desc' ? 'asc' : 'desc')}
-          className="w-full px-5 py-3.5 text-sm font-semibold rounded-xl bg-gray-50 dark:bg-gray-700 text-gray-800 dark:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-600 transition-all duration-200"
-        >
-          Ordenar: {sortOrder === 'desc' ? 'Mayor a menor' : 'Menor a mayor'}
-        </button>
-      </div>
-
-      {/* Provider Filter */}
-      <div className="mb-10">
-        <label className="block text-base font-semibold mb-5 text-gray-800 dark:text-gray-100">
-          Proveedores:
-        </label>
-        {PROVIDER_OPTIONS.map((provider) => (
-          <div key={provider.key} className="flex items-center mb-4 p-3 rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 transition-all duration-200">
-            <input
-              type="checkbox"
-              id={provider.key}
-              checked={selectedProviders.includes(provider.key)}
-              onChange={() => handleProviderChange(provider.key)}
-              className="w-5 h-5 mr-4 accent-blue-600 cursor-pointer rounded"
-            />
-            <label htmlFor={provider.key} className="text-base cursor-pointer select-none text-gray-700 dark:text-gray-200">
-              {provider.label}
-            </label>
-          </div>
-        ))}
-      </div>
-
-      {/* Offers Filter */}
-      <div className="mb-8">
-        <button
-          onClick={toggleOffers}
-          className="w-full px-5 py-3.5 text-sm font-semibold rounded-xl bg-blue-50 dark:bg-blue-900/30 text-blue-700 dark:text-blue-200 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-all duration-200"
-        >
-          {showOnlyOffers ? 'Ver todos los productos' : 'Solo ofertas'}
-        </button>
-      </div>
-
-      {/* Message when no products are available */}
-      {maxPrice === 0 && (
-        <p className="text-sm text-gray-500 dark:text-gray-400 mt-6 text-center italic">
-          No hay productos disponibles para filtrar.
-        </p>
-      )}
     </aside>
   );
 };
